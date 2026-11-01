@@ -270,7 +270,13 @@ if st.session_state.active_page == 'Discover':
                 if lane_items:
                     st.markdown(f'**{icon} {lane}**')
                     for i, option in lane_items:
-                        if st.button(phrase(option['question']), key=f'follow_{chosen}_{i}', use_container_width=True):
+                        is_selected = st.session_state.get('investigate_choice') == i
+                        if st.button(
+                            phrase(option['question']),
+                            key=f'follow_{chosen}_{i}',
+                            use_container_width=True,
+                            type='primary' if is_selected else 'secondary',
+                        ):
                             st.session_state.investigate_choice = i
                             st.rerun()
             i = st.session_state.get('investigate_choice')
