@@ -9,10 +9,10 @@ import plotly.express as px
 import streamlit as st
 
 from analysis_engine import discover, fmt, load_csv, plot_finding, profile
-from investigate import investigate
+from investigate import suggest_followups, render_investigation
 
 ROOT = Path(__file__).resolve().parent
-st.set_page_config(page_title='Data Stories', page_icon='📊', layout='wide', initial_sidebar_state='expanded')
+st.set_page_config(page_title='Data Stories', page_icon='📈', layout='wide', initial_sidebar_state='expanded')
 st.markdown('''<style>
 html, body, [class*="css"] {font-family: Arial, Helvetica, sans-serif;}
 .block-container {padding-top: 2rem;max-width: 1160px;}
@@ -29,6 +29,10 @@ def choose_data() -> tuple[bytes | None, str]:
         up = st.sidebar.file_uploader('Choose a CSV file', type=['csv'], help='CSV files up to 8 MB')
         return (up.getvalue(), up.name) if up is not None else (None, '')
     demos = {'Mt. Bachelor monthly snowfall': 'mt_bachelor_monthly.csv', 'Fictional community survey': 'sample_survey.csv'}
+    demos = {k: v for k, v in demos.items() if (ROOT / 'samples' / v).exists()}
+    if not demos:
+        st.sidebar.info('Sample datasets are being added. Please upload a CSV.')
+        return None, ''
     selected = st.sidebar.selectbox('Sample dataset', list(demos))
     target = ROOT / 'samples' / demos[selected]
     return target.read_bytes(), selected
@@ -68,6 +72,8 @@ if st.session_state.get('data_identity') != identity:
     st.session_state.data_identity = identity
     st.session_state.story = []
     st.session_state.investigation_notes = {}
+    st.session_state.selected_finding = None
+    st.session_state.investigate_choice = None
 
 p = profile(df)
 st.caption(f'Dataset: **{source_name}** · CSV is processed in the running app. No account or database is used.')
@@ -79,83 +85,135 @@ with st.expander('About this dataset and its limitations', expanded=False):
         st.write('The sample Mt. Bachelor records are modeled Open-Meteo snowfall estimates, not official resort measurements. The final month may be incomplete.')
     st.warning('Do not upload confidential, personal, medical, student, or other protected data to a publicly hosted version without an appropriate privacy review.')
 
-# Filters apply to both findings and free exploration.
-st.sidebar.divider()
-st.sidebar.subheader('Filter your view')
+
+# Keep the discovery experience simple: advanced filtering belongs in Explore.
+# Partial periods are excluded so they do not distort comparisons.
 filtered = df.copy()
-if 'coverage' in df.columns and 'partial' in df['coverage'].astype(str).str.lower().unique():
-    include_partial = st.sidebar.checkbox('Include partial periods',value=False,help='Incomplete months can mislead comparisons with full months.')
-    if not include_partial:
-        filtered=filtered[filtered['coverage'].astype(str).str.lower()!='partial']
-if p['dates']:
-    date_col = st.sidebar.selectbox('Date field', p['dates'], key='date_filter_col')
-    vals = df[date_col].dropna()
-    if len(vals) and vals.min() < vals.max():
-        earliest, latest = vals.min().date(), vals.max().date()
-        span = st.sidebar.date_input('Date range', (earliest, latest), min_value=earliest, max_value=latest)
-        if isinstance(span, (tuple,list)) and len(span)==2:
-            filtered = filtered[filtered[date_col].between(pd.Timestamp(span[0]),pd.Timestamp(span[1])+pd.Timedelta(days=1)-pd.Timedelta(microseconds=1))]
-if p['categories']:
-    category = st.sidebar.selectbox('Optional category filter', ['No category filter']+p['categories'])
-    if category != 'No category filter':
-        options = sorted(df[category].dropna().astype(str).unique().tolist())
-        chosen=st.sidebar.multiselect('Include categories',options,default=options)
-        filtered=filtered[filtered[category].astype(str).isin(chosen)]
+if 'coverage' in filtered.columns:
+    filtered = filtered[filtered['coverage'].astype(str).str.lower() != 'partial'].copy()
 if filtered.empty:
-    st.warning('No records match your filters. Try widening your date range or selecting more categories.')
+    st.warning('No complete observations are available. Check the Data & quality section.')
     st.stop()
 
-nfiltered=profile(filtered)
-tabs=st.tabs(['Discover','Explore','My Data Story','Data & quality'])
+def friendly(name: str) -> str:
+    return str(name).replace('_', ' ').replace('-', ' ').strip().capitalize()
 
+def question_for(f, frame):
+    r = f['recipe']
+    kind = r['type']
+    if kind == 'time':
+        v = friendly(r['value']).lower()
+        d = r['date']
+        vals = frame[d].dropna()
+        if len(vals) and vals.dt.year.nunique() > 10:
+            return f'How has {v} varied over the years?'
+        return f'How has {v} changed over time?'
+    if kind == 'groups':
+        return f'How does {friendly(r["value"]).lower()} differ across {friendly(r["category"]).lower()}?'
+    if kind == 'distribution':
+        return f'What is typical for {friendly(r["value"]).lower()}?'
+    if kind == 'relationship':
+        return f'Are {friendly(r["x"]).lower()} and {friendly(r["y"]).lower()} connected?'
+    return 'Are there gaps in the dataset?'
+
+def guidance_for(f):
+    kind = f['recipe']['type']
+    if kind == 'time':
+        return ('Explore the long-term pattern and compare meaningful time periods. '
+                'A comparison of the first and last *months* is not evidence of a yearly trend.')
+    if kind == 'groups':
+        return 'Compare categories and examine how typical values differ.'
+    if kind == 'distribution':
+        return 'Look at common values, the spread, and unusual observations.'
+    if kind == 'relationship':
+        return 'Examine how two measurements vary together, without assuming cause and effect.'
+    return 'Understand missing records before drawing conclusions.'
+
+nfiltered = profile(filtered)
+tabs = st.tabs(['Discover', 'Explore', 'My Data Story', 'Data & quality'])
 with tabs[0]:
-    st.subheader('What stands out?')
-    st.write('These are calculated observations and promising questions—not automatically proven explanations. Filters in the sidebar update the results. In **Investigate further**, try Dig deeper, Change perspective, or Make connections.')
-    a,b,c=st.columns(3)
-    a.metric('Records in view', f'{len(filtered):,}')
-    b.metric('Numeric fields', len(nfiltered['numeric']))
-    c.metric('Missing cells',f'{nfiltered["missing"]:,}')
-    findings=discover(filtered,limit=5)
-    if not findings:
-        st.info('This dataset has too little usable numeric data for automated findings. Try the Explore tab or check the CSV format.')
-    for idx,f in enumerate(findings):
-        with st.container(border=True):
-            st.markdown(f'### {idx+1}. {f["title"]}')
-            st.write(f['summary'])
-            st.caption(f['evidence'])
-            st.plotly_chart(plot_finding(filtered,f),use_container_width=True,key=f'auto_{idx}')
-            with st.expander('A question worth asking'):
-                st.write(f['question'])
-            with st.expander('🔎 Investigate further — three ways to explore'):
-                result = investigate(filtered, f, key=f'inv_{idx}')
-                if result is not None:
-                    question, explanation, followup_fig = result
-                    st.plotly_chart(followup_fig, use_container_width=True, key=f'followup_chart_{idx}')
-                    st.caption(explanation)
-                    st.markdown('**What do you notice?**')
-                    note = st.text_area('Write a note to include in your Data Story (optional)',
-                                        key=f'investigation_note_{idx}',height=80)
-                    if st.button('Save this investigation to My Data Story', key=f'save_followup_{idx}'):
-                        ident=('investigation', question, f['title'])
-                        if any(entry.get('ident') == ident for entry in st.session_state.story):
-                            st.info('This investigation is already in your story. Remove it there to save a different version.')
-                        else:
-                            st.session_state.story.append({
-                                'ident': ident,
-                                'title': question,
-                                'summary': f'Follow-up to: {f["title"]}' + (f' — {note}' if note.strip() else ''),
-                                'evidence': explanation,
-                                'chart': followup_fig.to_html(full_html=False,include_plotlyjs=False)
-                            })
-                            st.success('Investigation added to My Data Story.')
-            if st.button('Save to My Data Story',key=f'save_{idx}'):
-                ident=(f['title'],f['summary'])
-                if any((s['title'],s['summary'])==ident for s in st.session_state.story):
-                    st.info('This finding is already in your story.')
-                else:
-                    fig=plot_finding(filtered,f)
-                    st.session_state.story.append({**f,'chart':fig.to_html(full_html=False,include_plotlyjs=False)})
-                    st.success('Added to My Data Story.')
+    findings = discover(filtered, limit=5)
+    chosen = st.session_state.get('selected_finding')
+    if chosen is None or chosen >= len(findings):
+        st.subheader('What would you like to discover?')
+        st.write('Choose one interesting question. We will show you a visualization, explain what it means, and offer new directions to explore.')
+        st.caption(f'{len(filtered):,} records · {len(df.columns)} columns · {source_name}')
+        if not findings:
+            st.info('Not enough usable numeric data for automatic discoveries. Try the Explore tab.')
+        for idx, finding in enumerate(findings):
+            with st.container(border=True):
+                st.markdown(f'#### {idx+1}. {question_for(finding, filtered)}')
+                st.write(guidance_for(finding))
+                if st.button('Explore this question →', key=f'open_{idx}', type='primary' if idx == 0 else 'secondary'):
+                    st.session_state.selected_finding = idx
+                    st.session_state.investigate_choice = None
+                    st.rerun()
+        st.caption('Already have a question? Use the Explore tab to choose your own variables.')
+    else:
+        finding = findings[chosen]
+        if st.button('← All discovery questions', key='return_to_gallery'):
+            st.session_state.selected_finding = None
+            st.session_state.investigate_choice = None
+            st.rerun()
+        st.subheader(question_for(finding, filtered))
+        st.write(guidance_for(finding))
+        if finding['recipe']['type'] == 'time':
+            st.info('Monthly data often have seasonal patterns. Use **Change perspective** below for yearly or decade comparisons; compare only complete periods.')
+        else:
+            st.write(finding['summary'])
+        st.plotly_chart(plot_finding(filtered, finding), use_container_width=True, key='selected_chart')
+        with st.expander('How was this finding calculated?'):
+            st.write(finding['evidence'])
+            st.write(finding['question'])
+        if st.button('Save this discovery to My Data Story', key='save_discovery'):
+            ident = ('discovery', finding['title'])
+            if any(item.get('ident') == ident for item in st.session_state.story):
+                st.info('This discovery is already saved.')
+            else:
+                fig = plot_finding(filtered, finding)
+                st.session_state.story.append({
+                    'ident': ident, 'title': question_for(finding, filtered),
+                    'summary': guidance_for(finding), 'evidence': finding['evidence'],
+                    'chart': fig.to_html(full_html=False, include_plotlyjs=False)
+                })
+                st.success('Saved to My Data Story.')
+        st.divider()
+        st.markdown('### Where would you like to go next?')
+        st.caption('Choose a new perspective. Questions are offered only when supported by the available data.')
+        options = suggest_followups(filtered, finding)
+        if not options:
+            st.info('No other follow-up questions are available. Try Explore for a custom chart.')
+        else:
+            for lane, icon in [('Dig deeper','🔎'), ('Change perspective','📅'), ('Make connections','🔗')]:
+                lane_items = [(i,o) for i,o in enumerate(options) if o['lane'] == lane]
+                if lane_items:
+                    st.markdown(f'**{icon} {lane}**')
+                    for i, option in lane_items:
+                        if st.button(option['question'], key=f'follow_{chosen}_{i}', use_container_width=True):
+                            st.session_state.investigate_choice = i
+                            st.rerun()
+            i = st.session_state.get('investigate_choice')
+            if i is not None and 0 <= i < len(options):
+                option = options[i]
+                with st.container(border=True):
+                    st.markdown('#### ' + option['question'])
+                    outcome = render_investigation(filtered, finding, option, key=f'investigation_{chosen}_{i}')
+                    if outcome is not None:
+                        explanation, fig = outcome
+                        st.plotly_chart(fig, use_container_width=True, key=f'investigation_chart_{chosen}_{i}')
+                        st.write(explanation)
+                        note = st.text_area('Your interpretation (optional)', key=f'note_{chosen}_{i}', height=75)
+                        if st.button('Save this investigation to My Data Story', key=f'save_followup_{chosen}_{i}'):
+                            ident = ('investigation', finding['title'], option['id'])
+                            if any(item.get('ident') == ident for item in st.session_state.story):
+                                st.info('This investigation is already saved.')
+                            else:
+                                st.session_state.story.append({
+                                    'ident': ident, 'title': option['question'],
+                                    'summary': 'Follow-up to: ' + question_for(finding, filtered) + (' — ' + note if note.strip() else ''),
+                                    'evidence': explanation, 'chart': fig.to_html(full_html=False, include_plotlyjs=False)
+                                })
+                                st.success('Saved to My Data Story.')
 
 with tabs[1]:
     st.subheader('Explore your own question')
@@ -245,4 +303,4 @@ with tabs[3]:
     st.download_button('Download filtered data (CSV)',filtered.to_csv(index=False).encode('utf-8'),file_name='filtered_data.csv',mime='text/csv')
 
 st.divider()
-st.caption('Data Stories v4 · Rule-based discovery and follow-up investigations · No AI API · Associations do not establish causation.')
+st.caption('Data Stories v5 preview · Rule-based discovery and follow-up investigations · No AI API · Associations do not establish causation.')
