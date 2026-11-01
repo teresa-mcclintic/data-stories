@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 import pandas as pd
@@ -41,7 +42,9 @@ def plan_question(question: str, df: pd.DataFrame, labels: dict[str,str],
         'Return JSON keys: type, date, value, category, x, y, aggregation, period, reason. '
         'Use null for unused fields. Allowed aggregation: average,total,median,count. '
         'Allowed period: original,year,decade,month. '
-        'Trend requires a date field plus numeric value. Group requires category plus numeric value. '
+        'Trend requires a date field plus numeric value. Group requires an existing category field plus numeric value. '
+        'For time questions about calendar years, decades or months choose trend, '
+        'and derive the period from the date field. Do not invent a decade column. '
         'Distribution requires numeric value. Relationship requires two different numeric fields. '
         'If the requested question needs a statistical test, causal inference, predictions, '
         'specific filtering, season-year grouping, or analysis outside these operations, '
@@ -77,6 +80,17 @@ def plan_question(question: str, df: pd.DataFrame, labels: dict[str,str],
         if not isinstance(field,str) or field not in kinds or kinds[field]!=kind:
             raise UnsupportedQuestion('That question cannot be calculated using the available column types.')
         return field
+    # Repair a common planning mistake: decades must be derived from dates,
+    # rather than treated as a pre-existing grouping column.
+    if re.search(r'\bdecades?\b', question, flags=re.IGNORECASE):
+        date_cols = [c for c,t in kinds.items() if t=='date']
+        value = plan.get('value')
+        if kinds.get(value) != 'numeric':
+            value = next((c for c in (plan.get('y'), plan.get('x'))
+                          if kinds.get(c)=='numeric'), None)
+        if date_cols and value is not None:
+            date_col = plan.get('date') if plan.get('date') in date_cols else date_cols[0]
+            plan.update(type='trend', date=date_col, value=value, period='decade')
     typ=plan['type']
     if typ=='trend':
         require('date','date'); require('value','numeric')
@@ -120,15 +134,23 @@ def calculate(df: pd.DataFrame, plan: dict, labels: dict[str,str]):
         elif period=='decade': data['Period']=((data[date].dt.year//10)*10).astype(str)+'s'
         elif period=='month': data['Period']=data[date].dt.month_name()
         else: data['Period']=data[date]
-        # Never turn monthly totals into an unqualified average for a decade:
-        # each plotted point is an aggregation of represented observations.
-        g=data.groupby('Period',as_index=False,sort=(period!='month'))[value].agg(AGG[method])
+        # For additive monthly values, compare mean ANNUAL totals per decade
+        # rather than raw decade totals (which depend on the number of years).
+        if period=='decade' and method=='total':
+            annual=data.assign(Year=data[date].dt.year).groupby('Year',as_index=False)[value].sum()
+            annual['Period']=((annual['Year']//10)*10).astype(str)+'s'
+            g=annual.groupby('Period',as_index=False)[value].mean()
+        else:
+            g=data.groupby('Period',as_index=False,sort=(period!='month'))[value].agg(AGG[method])
         if period=='month':
             months=list(__import__('calendar').month_name)[1:]
             g['Period']=pd.Categorical(g['Period'],categories=months,ordered=True)
             g=g.sort_values('Period')
         if len(g)<2: raise UnsupportedQuestion('Not enough different time periods to compare.')
-        fig=px.line(g,x='Period',y=value,markers=True,title=f'{method.title()} {label(value)} by {period if period!="original" else "date"}',
+        title = (f'Average annual total {label(value)} by decade'
+                 if period=='decade' and method=='total'
+                 else f'{method.title()} {label(value)} by {period if period!="original" else "date"}')
+        fig=px.line(g,x='Period',y=value,markers=True,title=title,
                     labels={value:label(value),'Period':period.title() if period!='original' else 'Date'})
         stats=f'{len(g)} periods, minimum {g[value].min():,.2f}, maximum {g[value].max():,.2f}.'
         note=('Only years with all 12 months represented were included. '
