@@ -215,6 +215,73 @@ for col, (page, label, explanation) in zip(nav_cols, nav_items):
         st.caption(explanation)
 st.divider()
 
+# Keep the AI option reachable on every page, including before a discovery is selected.
+st.markdown('### ✨ Ask Data Stories AI')
+with st.expander('Ask your own question about this dataset', expanded=False):
+    st.caption('Try a question in your own words. AI chooses a supported analysis; Python calculates the numbers and draws the chart.')
+    try:
+        ai_key = st.secrets.get('OPENAI_API_KEY', '')
+        ai_model = st.secrets.get('OPENAI_MODEL', 'gpt-4.1-mini')
+    except (FileNotFoundError, KeyError):
+        ai_key = ''
+        ai_model = 'gpt-4.1-mini'
+    if not ai_key:
+        st.info('AI is not configured yet. The discovery and follow-up tools above still work. An app administrator can add OPENAI_API_KEY in Streamlit app settings → Secrets.')
+    else:
+        st.caption('Privacy: your question and column names/types are sent to OpenAI. Dataset rows are not sent. Do not ask questions containing private information.')
+        ai_consent = st.checkbox('I understand what is sent to the AI service', key='ai_consent')
+        if st.session_state.get('ai_count',0) >= 5:
+            st.warning('You have reached the five-question limit for this session.')
+        else:
+            with st.form('ai_question_form', clear_on_submit=False):
+                ai_question = st.text_input('Your question about the data', max_chars=400,
+                    placeholder='Example: How did snowfall differ by decade?')
+                ai_submit = st.form_submit_button('Ask Data Stories AI', disabled=not ai_consent)
+            if ai_submit:
+                if not ai_question.strip():
+                    st.warning('Please type a question.')
+                else:
+                    st.session_state.ai_count += 1
+                    st.session_state.ai_answer = None
+                    try:
+                        with st.spinner('Planning an analysis and calculating the answer…'):
+                            ai_plan = plan_question(ai_question,filtered,
+                                st.session_state.column_labels,ai_key,ai_model)
+                            ai_summary,ai_fig = calculate(filtered,ai_plan,
+                                st.session_state.column_labels)
+                            st.session_state.ai_answer = (ai_question,ai_summary,ai_fig)
+                    except UnsupportedQuestion as exc:
+                        st.info(str(exc))
+                    except Exception as exc:
+                        # Provide a safe, actionable error rather than hiding every failure.
+                        # Do not display request headers, API keys or raw exceptions.
+                        import logging
+                        logging.getLogger(__name__).exception('Data Stories AI request failed')
+                        try:
+                            from openai import AuthenticationError, PermissionDeniedError, RateLimitError, APIConnectionError, APITimeoutError, BadRequestError, NotFoundError
+                        except ImportError:
+                            AuthenticationError = PermissionDeniedError = RateLimitError = APIConnectionError = APITimeoutError = BadRequestError = NotFoundError = ()
+                        if isinstance(exc, AuthenticationError):
+                            st.error('OpenAI rejected the API key. Check the OPENAI_API_KEY value in this app’s Streamlit Secrets.')
+                        elif isinstance(exc, PermissionDeniedError):
+                            st.error('This OpenAI API project does not have permission to use the selected model. Check its project access and model setting.')
+                        elif isinstance(exc, RateLimitError):
+                            st.error('OpenAI returned a usage or quota limit. Check your API project’s billing, available credits, and rate limits.')
+                        elif isinstance(exc, (APIConnectionError, APITimeoutError)):
+                            st.error('The app could not connect to OpenAI. Please try again or check the Streamlit logs.')
+                        elif isinstance(exc, (BadRequestError, NotFoundError)):
+                            st.error('The OpenAI request was rejected. Confirm OPENAI_MODEL is supported by your API project (try gpt-4.1-mini) and consult the Streamlit app logs.')
+                        else:
+                            st.error(f'The analysis encountered an unexpected error ({type(exc).__name__}). Open the Streamlit app logs for details. No API key is shown here.')
+        if st.session_state.get('ai_answer'):
+            asked, answer, figure = st.session_state.ai_answer
+            st.markdown('**Your question:** ' + asked)
+            st.plotly_chart(figure,use_container_width=True,key='ai_result_chart')
+            st.write(answer)
+            st.caption('Numbers and visualization are computed by Python from the supplied CSV. Not every question is supported yet.')
+
+st.divider()
+
 if st.session_state.active_page == 'Discover':
     findings = discover(filtered, limit=5)
     chosen = st.session_state.get('selected_finding')
@@ -320,69 +387,6 @@ if st.session_state.active_page == 'Discover':
                                     })
                                     st.success('Saved to My Data Story.')
 
-            st.divider()
-            st.markdown('### ✨ Ask Data Stories AI')
-            st.caption('Try a question in your own words. AI chooses a supported analysis; Python calculates the numbers and draws the chart.')
-            try:
-                ai_key = st.secrets.get('OPENAI_API_KEY', '')
-                ai_model = st.secrets.get('OPENAI_MODEL', 'gpt-4.1-mini')
-            except (FileNotFoundError, KeyError):
-                ai_key = ''
-                ai_model = 'gpt-4.1-mini'
-            if not ai_key:
-                st.info('AI is not configured yet. The discovery and follow-up tools above still work. An app administrator can add OPENAI_API_KEY in Streamlit app settings → Secrets.')
-            else:
-                st.caption('Privacy: your question and column names/types are sent to OpenAI. Dataset rows are not sent. Do not ask questions containing private information.')
-                ai_consent = st.checkbox('I understand what is sent to the AI service', key='ai_consent')
-                if st.session_state.get('ai_count',0) >= 5:
-                    st.warning('You have reached the five-question limit for this session.')
-                else:
-                    with st.form('ai_question_form', clear_on_submit=False):
-                        ai_question = st.text_input('Your question about the data', max_chars=400,
-                            placeholder='Example: How did snowfall differ by decade?')
-                        ai_submit = st.form_submit_button('Ask Data Stories AI', disabled=not ai_consent)
-                    if ai_submit:
-                        if not ai_question.strip():
-                            st.warning('Please type a question.')
-                        else:
-                            st.session_state.ai_count += 1
-                            st.session_state.ai_answer = None
-                            try:
-                                with st.spinner('Planning an analysis and calculating the answer…'):
-                                    ai_plan = plan_question(ai_question,filtered,
-                                        st.session_state.column_labels,ai_key,ai_model)
-                                    ai_summary,ai_fig = calculate(filtered,ai_plan,
-                                        st.session_state.column_labels)
-                                    st.session_state.ai_answer = (ai_question,ai_summary,ai_fig)
-                            except UnsupportedQuestion as exc:
-                                st.info(str(exc))
-                            except Exception as exc:
-                                # Provide a safe, actionable error rather than hiding every failure.
-                                # Do not display request headers, API keys or raw exceptions.
-                                import logging
-                                logging.getLogger(__name__).exception('Data Stories AI request failed')
-                                try:
-                                    from openai import AuthenticationError, PermissionDeniedError, RateLimitError, APIConnectionError, APITimeoutError, BadRequestError, NotFoundError
-                                except ImportError:
-                                    AuthenticationError = PermissionDeniedError = RateLimitError = APIConnectionError = APITimeoutError = BadRequestError = NotFoundError = ()
-                                if isinstance(exc, AuthenticationError):
-                                    st.error('OpenAI rejected the API key. Check the OPENAI_API_KEY value in this app’s Streamlit Secrets.')
-                                elif isinstance(exc, PermissionDeniedError):
-                                    st.error('This OpenAI API project does not have permission to use the selected model. Check its project access and model setting.')
-                                elif isinstance(exc, RateLimitError):
-                                    st.error('OpenAI returned a usage or quota limit. Check your API project’s billing, available credits, and rate limits.')
-                                elif isinstance(exc, (APIConnectionError, APITimeoutError)):
-                                    st.error('The app could not connect to OpenAI. Please try again or check the Streamlit logs.')
-                                elif isinstance(exc, (BadRequestError, NotFoundError)):
-                                    st.error('The OpenAI request was rejected. Confirm OPENAI_MODEL is supported by your API project (try gpt-4.1-mini) and consult the Streamlit app logs.')
-                                else:
-                                    st.error(f'The analysis encountered an unexpected error ({type(exc).__name__}). Open the Streamlit app logs for details. No API key is shown here.')
-                if st.session_state.get('ai_answer'):
-                    asked, answer, figure = st.session_state.ai_answer
-                    st.markdown('**Your question:** ' + asked)
-                    st.plotly_chart(figure,use_container_width=True,key='ai_result_chart')
-                    st.write(answer)
-                    st.caption('Numbers and visualization are computed by Python from the supplied CSV. Not every question is supported yet.')
 
 if st.session_state.active_page == 'Explore':
     st.subheader('Explore your own question')
