@@ -77,7 +77,7 @@ if st.session_state.get('data_identity') != identity:
     st.session_state.investigation_notes = {}
     st.session_state.selected_finding = None
     st.session_state.investigate_choice = None
-    st.session_state.discovery_questions_open = True
+    st.session_state.discovery_question_picker = None
     st.session_state.column_labels = {col: infer_label(col) for col in df.columns}
     st.session_state.dataset_title = source_name.replace('.csv', '').replace('_',' ').strip()
     st.session_state.row_grain = infer_grain(df.columns)
@@ -317,55 +317,33 @@ if st.session_state.active_page == 'Discover':
         st.session_state.investigate_choice = None
         chosen = None
 
-    def choose_finding(index: int) -> None:
-        st.session_state.selected_finding = index
-        st.session_state.investigate_choice = None
-        st.session_state.discovery_questions_open = False
+    st.subheader('What would you like to discover?')
+    st.caption(f'{st.session_state.dataset_title} · {len(filtered):,} records · {len(df.columns)} columns')
 
-    # A clickable section heading gives a genuine show/hide interaction.
-    # Unlike st.toggle, its state does not look like an unrelated on/off setting.
-    if 'discovery_questions_open' not in st.session_state:
-        st.session_state.discovery_questions_open = chosen is None
+    def choose_discovery_question() -> None:
+        # A selection updates the displayed investigation before the next render.
+        new_choice = st.session_state.discovery_question_picker
+        if new_choice != st.session_state.get('selected_finding'):
+            st.session_state.selected_finding = new_choice
+            st.session_state.investigate_choice = None
 
-    def toggle_discovery_questions() -> None:
-        st.session_state.discovery_questions_open = not st.session_state.discovery_questions_open
-
-    heading_col, control_col = st.columns([3, 1], vertical_alignment='center')
-    with heading_col:
-        st.subheader('What would you like to discover?')
-    with control_col:
-        st.button(
-            '▲ Hide questions' if st.session_state.discovery_questions_open else '▼ Show questions',
-            key='toggle_discovery_questions_button',
-            on_click=toggle_discovery_questions,
-            use_container_width=True,
-        )
-    if chosen is not None and not st.session_state.discovery_questions_open:
-        st.caption('Selected question: ' + question_for(findings[chosen], filtered))
-
-    if st.session_state.discovery_questions_open:
-        st.write('Select a question to see its visualization and explore related questions.')
-        st.caption(f'{st.session_state.dataset_title} · {len(filtered):,} records · {len(df.columns)} columns')
-        if not findings:
-            st.info('Not enough usable numeric data for automatic discoveries. Try the Explore section.')
-        else:
-            for idx, item in enumerate(findings):
-                selected = chosen == idx
-                with st.container(border=True):
-                    st.button(
-                        f'{idx + 1}. {question_for(item, filtered)}',
-                        key=f'discovery_choice_{idx}',
-                        type='primary' if selected else 'secondary',
-                        use_container_width=True,
-                        on_click=choose_finding,
-                        args=(idx,),
-                    )
-                    st.caption(guidance_for(item))
     if not findings:
-        pass
-    elif chosen is None:
-        st.info('Choose a discovery question above, or use Ask Data Stories AI below.')
+        st.info('Not enough usable numeric data for automatic discoveries. Try the Explore section.')
     else:
+        if 'discovery_question_picker' not in st.session_state:
+            st.session_state.discovery_question_picker = chosen
+        st.selectbox(
+            'Choose a question to investigate',
+            options=list(range(len(findings))),
+            index=None,
+            placeholder='Select a question…',
+            format_func=lambda idx: question_for(findings[idx], filtered),
+            key='discovery_question_picker',
+            on_change=choose_discovery_question,
+            label_visibility='collapsed',
+            help='Choose a question to see its chart and suggested follow-up investigations.',
+        )
+    if findings and chosen is not None:
             st.divider()
             st.markdown('### Your selected investigation')
 
