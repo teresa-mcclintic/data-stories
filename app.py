@@ -10,6 +10,7 @@ import streamlit as st
 
 from analysis_engine import discover, fmt, load_csv, plot_finding, profile
 from investigate import suggest_followups, render_investigation
+from data_context import infer_label, infer_grain, replace_fields, style_figure, column_role
 
 ROOT = Path(__file__).resolve().parent
 st.set_page_config(page_title='Data Stories', page_icon='📈', layout='wide', initial_sidebar_state='expanded')
@@ -74,9 +75,51 @@ if st.session_state.get('data_identity') != identity:
     st.session_state.investigation_notes = {}
     st.session_state.selected_finding = None
     st.session_state.investigate_choice = None
+    st.session_state.column_labels = {col: infer_label(col) for col in df.columns}
+    st.session_state.dataset_title = source_name.replace('.csv', '').replace('_',' ').strip()
+    st.session_state.row_grain = infer_grain(df.columns)
 
 p = profile(df)
-st.caption(f'Dataset: **{source_name}** · CSV is processed in the running app. No account or database is used.')
+st.caption(f'Dataset: **{st.session_state.dataset_title}** · CSV is processed in the running app. No account or database is used.')
+
+# Optional confirmation: descriptions change presentation, not the source data or maths.
+with st.expander('✏️ Understand your data — review names and meanings', expanded=False):
+    st.write('We suggested readable labels for your columns. Correct anything that does not match your data.')
+    st.text_input('Dataset title', key='dataset_title')
+    grains = ['observation', 'day', 'month', 'year', 'person', 'transaction']
+    st.selectbox(
+        'What does each row represent?', grains,
+        format_func=lambda g: {'observation':'One observation / record', 'day':'One day',
+            'month':'One month', 'year':'One year', 'person':'One person',
+            'transaction':'One transaction'}[g],
+        key='row_grain',
+        help='This helps us phrase questions correctly. It does not silently change how values are calculated.',
+    )
+    st.caption('Original column names remain intact. Labels affect questions, charts, and menus, not calculations.')
+    st.dataframe(pd.DataFrame([
+        {'CSV field': col, 'Suggested label': st.session_state.column_labels.get(col, infer_label(col)),
+         'Detected type': column_role(df,col)}
+        for col in df.columns
+    ]), hide_index=True, use_container_width=True)
+    chosen_col = st.selectbox('Choose a column to rename', df.columns.tolist(), key='label_editor_column',
+                              format_func=lambda col: st.session_state.column_labels.get(col, col))
+    new_label = st.text_input('Show this column as', value=st.session_state.column_labels.get(chosen_col, infer_label(chosen_col)), key='label_editor_' + str(df.columns.get_loc(chosen_col)))
+    if st.button('Apply label', key='apply_label'):
+        if not new_label.strip():
+            st.warning('Please provide a nonempty label.')
+        else:
+            st.session_state.column_labels[chosen_col] = new_label.strip()
+            st.rerun()
+
+def pretty(field: str) -> str:
+    return st.session_state.column_labels.get(field, infer_label(field))
+
+def phrase(text: str) -> str:
+    return replace_fields(text, st.session_state.column_labels)
+
+def pretty_chart(fig):
+    return style_figure(fig, st.session_state.column_labels)
+
 
 with st.expander('About this dataset and its limitations', expanded=False):
     st.write('This tool describes patterns and associations; it cannot establish causes, verify the accuracy of source measurements, or guarantee statistical significance.')
@@ -96,7 +139,7 @@ if filtered.empty:
     st.stop()
 
 def friendly(name: str) -> str:
-    return str(name).replace('_', ' ').replace('-', ' ').strip().capitalize()
+    return pretty(name)
 
 def question_for(f, frame):
     r = f['recipe']
@@ -105,6 +148,13 @@ def question_for(f, frame):
         v = friendly(r['value']).lower()
         d = r['date']
         vals = frame[d].dropna()
+        grain = st.session_state.row_grain
+        if grain == 'month':
+            return f'How has monthly {v} changed over time?'
+        if grain == 'day':
+            return f'How has daily {v} changed over time?'
+        if grain == 'year':
+            return f'How has annual {v} changed over time?'
         if len(vals) and vals.dt.year.nunique() > 10:
             return f'How has {v} varied over the years?'
         return f'How has {v} changed over time?'
@@ -168,7 +218,7 @@ if st.session_state.active_page == 'Discover':
     if chosen is None or chosen >= len(findings):
         st.subheader('What would you like to discover?')
         st.write('Choose one interesting question. We will show you a visualization, explain what it means, and offer new directions to explore.')
-        st.caption(f'{len(filtered):,} records · {len(df.columns)} columns · {source_name}')
+        st.caption(f'{st.session_state.dataset_title} · {len(filtered):,} records · {len(df.columns)} columns')
         if not findings:
             st.info('Not enough usable numeric data for automatic discoveries. Try the Explore tab.')
         for idx, finding in enumerate(findings):
@@ -191,20 +241,20 @@ if st.session_state.active_page == 'Discover':
         if finding['recipe']['type'] == 'time':
             st.info('Monthly data often have seasonal patterns. Use **Change perspective** below for yearly or decade comparisons; compare only complete periods.')
         else:
-            st.write(finding['summary'])
-        st.plotly_chart(plot_finding(filtered, finding), use_container_width=True, key='selected_chart')
+            st.write(phrase(finding['summary']))
+        st.plotly_chart(pretty_chart(plot_finding(filtered, finding)), use_container_width=True, key='selected_chart')
         with st.expander('How was this finding calculated?'):
-            st.write(finding['evidence'])
-            st.write(finding['question'])
+            st.write(phrase(finding['evidence']))
+            st.write(phrase(finding['question']))
         if st.button('Save this discovery to My Data Story', key='save_discovery'):
             ident = ('discovery', finding['title'])
             if any(item.get('ident') == ident for item in st.session_state.story):
                 st.info('This discovery is already saved.')
             else:
-                fig = plot_finding(filtered, finding)
+                fig = pretty_chart(plot_finding(filtered, finding))
                 st.session_state.story.append({
                     'ident': ident, 'title': question_for(finding, filtered),
-                    'summary': guidance_for(finding), 'evidence': finding['evidence'],
+                    'summary': guidance_for(finding), 'evidence': phrase(finding['evidence']),
                     'chart': fig.to_html(full_html=False, include_plotlyjs=False)
                 })
                 st.success('Saved to My Data Story.')
@@ -220,19 +270,20 @@ if st.session_state.active_page == 'Discover':
                 if lane_items:
                     st.markdown(f'**{icon} {lane}**')
                     for i, option in lane_items:
-                        if st.button(option['question'], key=f'follow_{chosen}_{i}', use_container_width=True):
+                        if st.button(phrase(option['question']), key=f'follow_{chosen}_{i}', use_container_width=True):
                             st.session_state.investigate_choice = i
                             st.rerun()
             i = st.session_state.get('investigate_choice')
             if i is not None and 0 <= i < len(options):
                 option = options[i]
                 with st.container(border=True):
-                    st.markdown('#### ' + option['question'])
+                    st.markdown('#### ' + phrase(option['question']))
                     outcome = render_investigation(filtered, finding, option, key=f'investigation_{chosen}_{i}')
                     if outcome is not None:
                         explanation, fig = outcome
+                        fig = pretty_chart(fig)
                         st.plotly_chart(fig, use_container_width=True, key=f'investigation_chart_{chosen}_{i}')
-                        st.write(explanation)
+                        st.write(phrase(explanation))
                         note = st.text_area('Your interpretation (optional)', key=f'note_{chosen}_{i}', height=75)
                         if st.button('Save this investigation to My Data Story', key=f'save_followup_{chosen}_{i}'):
                             ident = ('investigation', finding['title'], option['id'])
@@ -240,9 +291,9 @@ if st.session_state.active_page == 'Discover':
                                 st.info('This investigation is already saved.')
                             else:
                                 st.session_state.story.append({
-                                    'ident': ident, 'title': option['question'],
+                                    'ident': ident, 'title': phrase(option['question']),
                                     'summary': 'Follow-up to: ' + question_for(finding, filtered) + (' — ' + note if note.strip() else ''),
-                                    'evidence': explanation, 'chart': fig.to_html(full_html=False, include_plotlyjs=False)
+                                    'evidence': phrase(explanation), 'chart': fig.to_html(full_html=False, include_plotlyjs=False)
                                 })
                                 st.success('Saved to My Data Story.')
 
