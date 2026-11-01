@@ -304,8 +304,8 @@ if st.session_state.active_page == 'Explore':
     nums=nfiltered['numeric']
     if chart_type.startswith('See how'):
         if nfiltered['dates'] and nums:
-            date=st.selectbox('Date column',nfiltered['dates'],key='explore_date')
-            value=st.selectbox('Value to follow',nums,key='explore_time_value')
+            date=st.selectbox('Date column',nfiltered['dates'],key='explore_date',format_func=pretty)
+            value=st.selectbox('Value to follow',nums,key='explore_time_value',format_func=pretty)
             aggregation=st.selectbox('When dates repeat, calculate', ['Average','Total','Median'], help='Choose Total only for additive quantities such as sales or snowfall, not temperatures or percentages.')
             grouped=filtered[[date,value]].dropna().groupby(date,as_index=False)[value].agg({'Average':'mean','Total':'sum','Median':'median'}[aggregation]).sort_values(date)
             fig=px.line(grouped,x=date,y=value,markers=True,title=f'{aggregation} {value} over time')
@@ -314,8 +314,8 @@ if st.session_state.active_page == 'Explore':
             fig=None
     elif chart_type=='Compare groups':
         if nfiltered['categories'] and nums:
-            cat=st.selectbox('Group by',nfiltered['categories'])
-            val=st.selectbox('Compare which number?',nums)
+            cat=st.selectbox('Group by',nfiltered['categories'],format_func=pretty)
+            val=st.selectbox('Compare which number?',nums,format_func=pretty)
             measure=st.radio('Calculate', ['Average','Total','Count'],horizontal=True)
             grouped=filtered.groupby(cat,as_index=False,observed=True)[val].agg({'Average':'mean','Total':'sum','Count':'count'}[measure]).sort_values(val,ascending=False)
             fig=px.bar(grouped,x=cat,y=val,title=f'{measure} of {val} by {cat}')
@@ -324,7 +324,7 @@ if st.session_state.active_page == 'Explore':
             fig=None
     elif chart_type=='Understand a distribution':
         if nums:
-            val=st.selectbox('Which numeric field?',nums,key='hist_val')
+            val=st.selectbox('Which numeric field?',nums,key='hist_val',format_func=pretty)
             bins=st.slider('Number of histogram bins',5,60,25)
             fig=px.histogram(filtered,x=val,nbins=bins,title=f'How is {val} distributed?')
         else:
@@ -332,8 +332,8 @@ if st.session_state.active_page == 'Explore':
             fig=None
     else:
         if len(nums)>=2:
-            x=st.selectbox('First measure',nums)
-            y=st.selectbox('Second measure',[n for n in nums if n!=x])
+            x=st.selectbox('First measure',nums,format_func=pretty)
+            y=st.selectbox('Second measure',[n for n in nums if n!=x],format_func=pretty)
             fig=px.scatter(filtered.head(10000),x=x,y=y,title=f'{x} compared with {y}')
             st.caption('A relationship on a chart does not establish cause and effect. Scatterplots show at most 10,000 records.')
         else:
@@ -341,6 +341,7 @@ if st.session_state.active_page == 'Explore':
             fig=None
     if fig is not None:
         fig.update_layout(template='plotly_white',font_family='Arial')
+        fig = pretty_chart(fig)
         st.plotly_chart(fig,use_container_width=True,key='explore_chart')
         st.download_button('Download interactive chart (HTML)',fig.to_html(full_html=True,include_plotlyjs=True).encode('utf-8'), 'data-stories-chart.html','text/html')
 
