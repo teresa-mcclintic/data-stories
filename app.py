@@ -370,19 +370,29 @@ if st.session_state.active_page == 'My Data Stories':
 
 if st.session_state.active_page == 'Data & Quality':
     st.subheader('Understand your dataset')
-    st.write('Inspect the original columns and look for issues before drawing conclusions.')
-    st.dataframe(filtered.head(100),use_container_width=True,hide_index=True)
-    st.caption('Preview shows up to 100 rows after filtering.')
+    st.write('Inspect numerical summaries and check for data quality issues before drawing conclusions.')
+    if nfiltered['numeric']:
+        st.markdown('#### Numeric summary')
+        summary = filtered[nfiltered['numeric']].describe().T.round(2)
+        summary = summary.rename(index=st.session_state.column_labels)
+        st.dataframe(summary, use_container_width=True)
+    else:
+        st.info('No numeric columns were detected in this dataset.')
+
     col1,col2,col3=st.columns(3)
     col1.metric('Rows',f'{len(filtered):,}')
     col2.metric('Columns',filtered.shape[1])
     col3.metric('Duplicate rows',f'{nfiltered["duplicate_rows"]:,}')
+
+    st.markdown('#### Data preview')
+    st.dataframe(filtered.head(100).rename(columns=st.session_state.column_labels),
+                 use_container_width=True,hide_index=True)
+    st.caption('Preview shows up to 100 rows after filtering.')
+
     st.markdown('#### Missing values by column')
     missing=filtered.isna().sum().sort_values(ascending=False).rename('Missing values')
+    missing.index=[pretty(col) for col in missing.index]
     st.dataframe(missing.to_frame(),use_container_width=True)
-    if nfiltered['numeric']:
-        st.markdown('#### Numeric summary')
-        st.dataframe(filtered[nfiltered['numeric']].describe().T.round(2),use_container_width=True)
     st.download_button('Download filtered data (CSV)',filtered.to_csv(index=False).encode('utf-8'),file_name='filtered_data.csv',mime='text/csv')
 
 st.divider()
