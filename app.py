@@ -130,8 +130,33 @@ def guidance_for(f):
     return 'Understand missing records before drawing conclusions.'
 
 nfiltered = profile(filtered)
-tabs = st.tabs(['Discover', 'Explore', 'My Data Story', 'Data & quality'])
-with tabs[0]:
+
+# Prominent navigation: explain what each section does before asking users to choose.
+# Buttons are keyboard accessible, and the active page stays highlighted.
+if 'active_page' not in st.session_state:
+    st.session_state.active_page = 'Discover'
+
+st.markdown('### What would you like to do?')
+nav_items = [
+    ('Discover', '🔎 Discover', 'Find questions worth exploring'),
+    ('Explore', '📊 Explore', 'Make your own comparisons'),
+    ('My Data Stories', '📖 My Data Stories', 'Save and share your findings'),
+    ('Data & Quality', '🗂️ Data & Quality', 'Inspect and check your data'),
+]
+nav_cols = st.columns(4, gap='small')
+for col, (page, label, explanation) in zip(nav_cols, nav_items):
+    with col:
+        if st.button(
+            label,
+            key='nav_' + page.replace(' ', '_').replace('&', 'and'),
+            type='primary' if st.session_state.active_page == page else 'secondary',
+            use_container_width=True,
+        ):
+            st.session_state.active_page = page
+        st.caption(explanation)
+st.divider()
+
+if st.session_state.active_page == 'Discover':
     findings = discover(filtered, limit=5)
     chosen = st.session_state.get('selected_finding')
     if chosen is None or chosen >= len(findings):
@@ -215,7 +240,7 @@ with tabs[0]:
                                 })
                                 st.success('Saved to My Data Story.')
 
-with tabs[1]:
+if st.session_state.active_page == 'Explore':
     st.subheader('Explore your own question')
     st.write('Choose what you want to investigate. The app will make a suitable interactive chart.')
     chart_type=st.selectbox('I want to…',['See how something changes over time','Compare groups','Understand a distribution','See whether two measures are related'])
@@ -262,7 +287,7 @@ with tabs[1]:
         st.plotly_chart(fig,use_container_width=True,key='explore_chart')
         st.download_button('Download interactive chart (HTML)',fig.to_html(full_html=True,include_plotlyjs=True).encode('utf-8'), 'data-stories-chart.html','text/html')
 
-with tabs[2]:
+if st.session_state.active_page == 'My Data Stories':
     st.subheader('My Data Story')
     st.write('Collect discoveries and follow-up investigations here, then download a self-contained HTML report with interactive charts. The story is held in this browser session only.')
     story=st.session_state.story
@@ -285,7 +310,7 @@ with tabs[2]:
             st.session_state.story=[]
             st.rerun()
 
-with tabs[3]:
+if st.session_state.active_page == 'Data & Quality':
     st.subheader('Understand your dataset')
     st.write('Inspect the original columns and look for issues before drawing conclusions.')
     st.dataframe(filtered.head(100),use_container_width=True,hide_index=True)
