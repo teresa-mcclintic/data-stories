@@ -143,16 +143,22 @@ nav_items = [
     ('My Data Stories', '📖 My Data Stories', 'Save and share your findings'),
     ('Data & Quality', '🗂️ Data & Quality', 'Inspect and check your data'),
 ]
+def change_page(page: str) -> None:
+    # Streamlit runs callbacks before rendering widgets on the next rerun,
+    # keeping the selected section and its visual highlighting in sync.
+    st.session_state.active_page = page
+
 nav_cols = st.columns(4, gap='small')
 for col, (page, label, explanation) in zip(nav_cols, nav_items):
     with col:
-        if st.button(
+        st.button(
             label,
             key='nav_' + page.replace(' ', '_').replace('&', 'and'),
             type='primary' if st.session_state.active_page == page else 'secondary',
             use_container_width=True,
-        ):
-            st.session_state.active_page = page
+            on_click=change_page,
+            args=(page,),
+        )
         st.caption(explanation)
 st.divider()
 
