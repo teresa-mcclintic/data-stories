@@ -322,16 +322,25 @@ if st.session_state.active_page == 'Discover':
         st.session_state.investigate_choice = None
         st.session_state.discovery_questions_open = False
 
-    # A controlled toggle reliably collapses the list when a question is selected.
-    # The selected investigation remains in the page flow below the list.
+    # A clickable section heading gives a genuine show/hide interaction.
+    # Unlike st.toggle, its state does not look like an unrelated on/off setting.
     if 'discovery_questions_open' not in st.session_state:
         st.session_state.discovery_questions_open = chosen is None
-    st.toggle(
-        'What would you like to discover?',
-        key='discovery_questions_open',
-        help='Expand to choose a different discovery question.',
-    )
-    if chosen is not None:
+
+    def toggle_discovery_questions() -> None:
+        st.session_state.discovery_questions_open = not st.session_state.discovery_questions_open
+
+    heading_col, control_col = st.columns([3, 1], vertical_alignment='center')
+    with heading_col:
+        st.subheader('What would you like to discover?')
+    with control_col:
+        st.button(
+            '▲ Hide questions' if st.session_state.discovery_questions_open else '▼ Show questions',
+            key='toggle_discovery_questions_button',
+            on_click=toggle_discovery_questions,
+            use_container_width=True,
+        )
+    if chosen is not None and not st.session_state.discovery_questions_open:
         st.caption('Selected question: ' + question_for(findings[chosen], filtered))
 
     if st.session_state.discovery_questions_open:
