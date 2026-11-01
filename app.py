@@ -11,6 +11,7 @@ import streamlit as st
 from analysis_engine import discover, fmt, load_csv, plot_finding, profile
 from investigate import suggest_followups, render_investigation
 from data_context import infer_label, infer_grain, replace_fields, style_figure, column_role
+from ai_assistant import plan_question, calculate, UnsupportedQuestion
 
 ROOT = Path(__file__).resolve().parent
 st.set_page_config(page_title='Data Stories', page_icon='📈', layout='wide', initial_sidebar_state='expanded')
@@ -78,6 +79,8 @@ if st.session_state.get('data_identity') != identity:
     st.session_state.column_labels = {col: infer_label(col) for col in df.columns}
     st.session_state.dataset_title = source_name.replace('.csv', '').replace('_',' ').strip()
     st.session_state.row_grain = infer_grain(df.columns)
+    st.session_state.ai_answer = None
+    st.session_state.ai_count = 0
 
 p = profile(df)
 st.caption(f'Dataset: **{st.session_state.dataset_title}** · CSV is processed in the running app. No account or database is used.')
@@ -316,6 +319,51 @@ if st.session_state.active_page == 'Discover':
                                         'evidence': phrase(explanation), 'chart': fig.to_html(full_html=False, include_plotlyjs=False)
                                     })
                                     st.success('Saved to My Data Story.')
+
+            st.divider()
+            st.markdown('### ✨ Ask Data Stories AI')
+            st.caption('Try a question in your own words. AI chooses a supported analysis; Python calculates the numbers and draws the chart.')
+            try:
+                ai_key = st.secrets.get('OPENAI_API_KEY', '')
+                ai_model = st.secrets.get('OPENAI_MODEL', 'gpt-4.1-mini')
+            except (FileNotFoundError, KeyError):
+                ai_key = ''
+                ai_model = 'gpt-4.1-mini'
+            if not ai_key:
+                st.info('AI is not configured yet. The discovery and follow-up tools above still work. An app administrator can add OPENAI_API_KEY in Streamlit app settings → Secrets.')
+            else:
+                st.caption('Privacy: your question and column names/types are sent to OpenAI. Dataset rows are not sent. Do not ask questions containing private information.')
+                ai_consent = st.checkbox('I understand what is sent to the AI service', key='ai_consent')
+                if st.session_state.get('ai_count',0) >= 5:
+                    st.warning('You have reached the five-question limit for this session.')
+                else:
+                    with st.form('ai_question_form', clear_on_submit=False):
+                        ai_question = st.text_input('Your question about the data', max_chars=400,
+                            placeholder='Example: How did snowfall differ by decade?')
+                        ai_submit = st.form_submit_button('Ask Data Stories AI', disabled=not ai_consent)
+                    if ai_submit:
+                        if not ai_question.strip():
+                            st.warning('Please type a question.')
+                        else:
+                            st.session_state.ai_count += 1
+                            st.session_state.ai_answer = None
+                            try:
+                                with st.spinner('Planning an analysis and calculating the answer…'):
+                                    ai_plan = plan_question(ai_question,filtered,
+                                        st.session_state.column_labels,ai_key,ai_model)
+                                    ai_summary,ai_fig = calculate(filtered,ai_plan,
+                                        st.session_state.column_labels)
+                                    st.session_state.ai_answer = (ai_question,ai_summary,ai_fig)
+                            except UnsupportedQuestion as exc:
+                                st.info(str(exc))
+                            except Exception:
+                                st.error('The AI service could not process your question. Please try again later.')
+                if st.session_state.get('ai_answer'):
+                    asked, answer, figure = st.session_state.ai_answer
+                    st.markdown('**Your question:** ' + asked)
+                    st.plotly_chart(figure,use_container_width=True,key='ai_result_chart')
+                    st.write(answer)
+                    st.caption('Numbers and visualization are computed by Python from the supplied CSV. Not every question is supported yet.')
 
 if st.session_state.active_page == 'Explore':
     st.subheader('Explore your own question')
