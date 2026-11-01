@@ -400,29 +400,29 @@ if st.session_state.active_page == 'Discover':
                     'chart': fig.to_html(full_html=False, include_plotlyjs=False)
                 })
                 st.success('Saved to My Data Story.')
-            i = st.session_state.get('investigate_choice')
-            if i is not None and 0 <= i < len(options):
-                option = options[i]
-                with st.container(border=True):
-                    st.markdown('#### ' + phrase(option['question']))
-                    outcome = render_investigation(filtered, finding, option, key=f'investigation_{chosen}_{i}')
-                    if outcome is not None:
-                        explanation, fig = outcome
-                        fig = pretty_chart(fig)
-                        st.plotly_chart(fig, use_container_width=True, key=f'investigation_chart_{chosen}_{i}')
-                        st.write(phrase(explanation))
-                        note = st.text_area('Your interpretation (optional)', key=f'note_{chosen}_{i}', height=75)
-                        if st.button('Save this investigation to My Data Story', key=f'save_followup_{chosen}_{i}'):
-                            ident = ('investigation', finding['title'], option['id'])
-                            if any(item.get('ident') == ident for item in st.session_state.story):
-                                st.info('This investigation is already saved.')
-                            else:
-                                st.session_state.story.append({
-                                    'ident': ident, 'title': phrase(option['question']),
-                                    'summary': 'Follow-up to: ' + question_for(finding, filtered) + (' — ' + note if note.strip() else ''),
-                                    'evidence': phrase(explanation), 'chart': fig.to_html(full_html=False, include_plotlyjs=False)
-                                })
-                                st.success('Saved to My Data Story.')
+        i = st.session_state.get('investigate_choice')
+        if i is not None and 0 <= i < len(options):
+            option = options[i]
+            with st.container(border=True):
+                st.markdown('#### ' + phrase(option['question']))
+                outcome = render_investigation(filtered, finding, option, key=f'investigation_{chosen}_{i}')
+                if outcome is not None:
+                    explanation, fig = outcome
+                    fig = pretty_chart(fig)
+                    st.plotly_chart(fig, use_container_width=True, key=f'investigation_chart_{chosen}_{i}')
+                    st.write(phrase(explanation))
+                    note = st.text_area('Your interpretation (optional)', key=f'note_{chosen}_{i}', height=75)
+                    if st.button('Save this investigation to My Data Story', key=f'save_followup_{chosen}_{i}'):
+                        ident = ('investigation', finding['title'], option['id'])
+                        if any(item.get('ident') == ident for item in st.session_state.story):
+                            st.info('This investigation is already saved.')
+                        else:
+                            st.session_state.story.append({
+                                'ident': ident, 'title': phrase(option['question']),
+                                'summary': 'Follow-up to: ' + question_for(finding, filtered) + (' — ' + note if note.strip() else ''),
+                                'evidence': phrase(explanation), 'chart': fig.to_html(full_html=False, include_plotlyjs=False)
+                            })
+                            st.success('Saved to My Data Story.')
 
 
 
