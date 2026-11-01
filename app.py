@@ -77,6 +77,7 @@ if st.session_state.get('data_identity') != identity:
     st.session_state.investigation_notes = {}
     st.session_state.selected_finding = None
     st.session_state.investigate_choice = None
+    st.session_state.followup_question_picker = None
     st.session_state.discovery_question_picker = None
     st.session_state.column_labels = {col: infer_label(col) for col in df.columns}
     st.session_state.dataset_title = source_name.replace('.csv', '').replace('_',' ').strip()
@@ -326,6 +327,7 @@ if st.session_state.active_page == 'Discover':
         if new_choice != st.session_state.get('selected_finding'):
             st.session_state.selected_finding = new_choice
             st.session_state.investigate_choice = None
+            st.session_state.followup_question_picker = None
 
     if not findings:
         st.info('Not enough usable numeric data for automatic discoveries. Try the Explore section.')
@@ -377,20 +379,22 @@ if st.session_state.active_page == 'Discover':
             if not options:
                 st.info('No other follow-up questions are available. Try Explore for a custom chart.')
             else:
-                for lane, icon in [('Dig deeper','🔎'), ('Change perspective','📅'), ('Make connections','🔗')]:
-                    lane_items = [(i,o) for i,o in enumerate(options) if o['lane'] == lane]
-                    if lane_items:
-                        st.markdown(f'**{icon} {lane}**')
-                        for i, option in lane_items:
-                            is_selected = st.session_state.get('investigate_choice') == i
-                            if st.button(
-                                phrase(option['question']),
-                                key=f'follow_{chosen}_{i}',
-                                use_container_width=True,
-                                type='primary' if is_selected else 'secondary',
-                            ):
-                                st.session_state.investigate_choice = i
-                                st.rerun()
+                def choose_followup_question() -> None:
+                    st.session_state.investigate_choice = st.session_state.followup_question_picker
+
+                if 'followup_question_picker' not in st.session_state:
+                    st.session_state.followup_question_picker = st.session_state.get('investigate_choice')
+                st.selectbox(
+                    'Choose a follow-up question',
+                    options=list(range(len(options))),
+                    index=None,
+                    placeholder='Select a follow-up question…',
+                    format_func=lambda idx: f"{options[idx]['lane']} — {phrase(options[idx]['question'])}",
+                    key='followup_question_picker',
+                    on_change=choose_followup_question,
+                    label_visibility='collapsed',
+                    help='Choose a follow-up to see the related investigation below.',
+                )
                 i = st.session_state.get('investigate_choice')
                 if i is not None and 0 <= i < len(options):
                     option = options[i]
