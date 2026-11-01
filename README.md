@@ -1,6 +1,6 @@
 # Data Stories — Version 6 AI preview
 
-Version 6 builds on Version 5 and adds an **optional** AI question box beneath the existing discovery investigations.
+Version 6 builds on Version 5 and adds an **optional** AI question box available at the top of every section, even before choosing a discovery.
 
 ## What it does
 
@@ -27,7 +27,7 @@ OPENAI_MODEL = "gpt-4.1-mini"
 
 **Never save the real key to GitHub, README, screenshots, or in chat.** The key is read server-side from Streamlit secrets.
 
-5. Reload the preview. Choose the Mt. Bachelor or fictional survey sample, select a discovery question, scroll down to **Ask Data Stories AI**, acknowledge the privacy notice, and ask a question.
+5. Reload the preview. Choose the Mt. Bachelor or fictional survey sample, open **Ask Data Stories AI** near the top of the page, acknowledge the privacy notice, and ask a question such as **How has snowfall changed from decade to decade?**
 6. Confirm the generated chart and numerical summary; test with a question requiring unsupported operations to see the safe refusal.
 
 Without the API key, the regular Version 5 functionality remains available and the AI box explains that setup is needed.
