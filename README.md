@@ -10,6 +10,7 @@ Version 6 builds on Version 5 and adds an **optional** AI question box below the
 - Supported analyses: time trends (original dates, calendar years, decades, months); category comparisons; numeric distributions; and scatterplot/correlation comparisons.
 - Unsupported questions—prediction, causal inference, specific filtering, many seasonal comparisons, statistical tests—are declined rather than answered with invented numbers.
 - No code supplied by AI is executed. AI produces an analysis plan, not the answer.
+- An AI result can be saved to **My Data Stories** with the original question, calculated explanation, interactive chart, and an optional personal note. Saved entries are marked **AI-Assisted Investigation** in the story list and HTML report.
 
 The descriptive answer is produced by Python, not a free-form AI interpretation. Future versions may expand supported question types and verified explanations.
 
