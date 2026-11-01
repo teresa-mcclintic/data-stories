@@ -46,7 +46,8 @@ def story_download(story: list[dict], source: str) -> str:
         caption=html.escape(entry['title'])
         desc=html.escape(entry['summary'])
         evidence=html.escape(entry['evidence'])
-        cards.append(f'<section><h2>{caption}</h2><p>{desc}</p><p><small>{evidence}</small></p>{entry["chart"]}</section>')
+        origin=html.escape(entry.get('origin', 'Discovery'))
+        cards.append(f'<section><p><small>{origin}</small></p><h2>{caption}</h2><p>{desc}</p><p><small>{evidence}</small></p>{entry["chart"]}</section>')
     return ('<!doctype html><html><head><meta charset="utf-8"><title>My Data Story</title>'
             '<style>body{font-family:Arial,Helvetica,sans-serif;max-width:900px;margin:36px auto;padding:0 20px;color:#243247}'
             'section{padding:24px 0;border-top:1px solid #ddd}h1{color:#193457}small{color:#536278}</style></head><body>'
@@ -279,6 +280,32 @@ def render_ai_panel() -> None:
                 st.plotly_chart(figure,use_container_width=True,key='ai_result_chart')
                 st.write(answer)
                 st.caption('Numbers and visualization are computed by Python from the supplied CSV. Not every question is supported yet.')
+                st.markdown('#### Add this investigation to your story')
+                ai_note = st.text_area(
+                    'Your interpretation (optional)',
+                    key='ai_story_note',
+                    height=85,
+                    placeholder='What do you find interesting about this result?',
+                )
+                if st.button('📖 Save to My Data Story', key='save_ai_investigation', type='primary'):
+                    # Reuse the existing story format and preserve the interactive chart.
+                    import hashlib
+                    fingerprint = hashlib.sha256(
+                        (asked + '\\n' + answer).encode('utf-8')
+                    ).hexdigest()
+                    ident = ('ai_investigation', fingerprint)
+                    if any(entry.get('ident') == ident for entry in st.session_state.story):
+                        st.info('This AI investigation is already saved to My Data Story.')
+                    else:
+                        st.session_state.story.append({
+                            'ident': ident,
+                            'origin': 'AI-Assisted Investigation',
+                            'title': asked,
+                            'summary': answer + ('\\n\\nYour interpretation: ' + ai_note.strip() if ai_note.strip() else ''),
+                            'evidence': 'Descriptive results calculated from the uploaded dataset using Python; AI assisted with selecting an analysis. Interpretations do not establish causation.',
+                            'chart': figure.to_html(full_html=False, include_plotlyjs=False),
+                        })
+                        st.success('Saved to My Data Story. Open My Data Stories to review or download it.')
 
 
 if st.session_state.active_page == 'Discover':
@@ -451,6 +478,8 @@ if st.session_state.active_page == 'My Data Stories':
         for i, item in enumerate(story):
             a,b=st.columns([5,1])
             a.markdown(f'**{i+1}. {item["title"]}**')
+            if item.get('origin'):
+                a.caption(item['origin'])
             a.write(item['summary'])
             if b.button('Remove',key=f'remove_{i}'):
                 st.session_state.story.pop(i)
