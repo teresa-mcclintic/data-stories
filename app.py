@@ -356,8 +356,27 @@ if st.session_state.active_page == 'Discover':
                                     st.session_state.ai_answer = (ai_question,ai_summary,ai_fig)
                             except UnsupportedQuestion as exc:
                                 st.info(str(exc))
-                            except Exception:
-                                st.error('The AI service could not process your question. Please try again later.')
+                            except Exception as exc:
+                                # Provide a safe, actionable error rather than hiding every failure.
+                                # Do not display request headers, API keys or raw exceptions.
+                                import logging
+                                logging.getLogger(__name__).exception('Data Stories AI request failed')
+                                try:
+                                    from openai import AuthenticationError, PermissionDeniedError, RateLimitError, APIConnectionError, APITimeoutError, BadRequestError, NotFoundError
+                                except ImportError:
+                                    AuthenticationError = PermissionDeniedError = RateLimitError = APIConnectionError = APITimeoutError = BadRequestError = NotFoundError = ()
+                                if isinstance(exc, AuthenticationError):
+                                    st.error('OpenAI rejected the API key. Check the OPENAI_API_KEY value in this app’s Streamlit Secrets.')
+                                elif isinstance(exc, PermissionDeniedError):
+                                    st.error('This OpenAI API project does not have permission to use the selected model. Check its project access and model setting.')
+                                elif isinstance(exc, RateLimitError):
+                                    st.error('OpenAI returned a usage or quota limit. Check your API project’s billing, available credits, and rate limits.')
+                                elif isinstance(exc, (APIConnectionError, APITimeoutError)):
+                                    st.error('The app could not connect to OpenAI. Please try again or check the Streamlit logs.')
+                                elif isinstance(exc, (BadRequestError, NotFoundError)):
+                                    st.error('The OpenAI request was rejected. Confirm OPENAI_MODEL is supported by your API project (try gpt-4.1-mini) and consult the Streamlit app logs.')
+                                else:
+                                    st.error(f'The analysis encountered an unexpected error ({type(exc).__name__}). Open the Streamlit app logs for details. No API key is shown here.')
                 if st.session_state.get('ai_answer'):
                     asked, answer, figure = st.session_state.ai_answer
                     st.markdown('**Your question:** ' + asked)
