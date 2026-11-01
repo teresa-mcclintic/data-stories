@@ -215,93 +215,107 @@ st.divider()
 if st.session_state.active_page == 'Discover':
     findings = discover(filtered, limit=5)
     chosen = st.session_state.get('selected_finding')
-    if chosen is None or chosen >= len(findings):
-        st.subheader('What would you like to discover?')
-        st.write('Choose one interesting question. We will show you a visualization, explain what it means, and offer new directions to explore.')
-        st.caption(f'{st.session_state.dataset_title} · {len(filtered):,} records · {len(df.columns)} columns')
-        if not findings:
-            st.info('Not enough usable numeric data for automatic discoveries. Try the Explore tab.')
-        for idx, finding in enumerate(findings):
-            with st.container(border=True):
-                st.markdown(f'#### {idx+1}. {question_for(finding, filtered)}')
-                st.write(guidance_for(finding))
-                if st.button('Explore this question →', key=f'open_{idx}', type='primary' if idx == 0 else 'secondary'):
-                    st.session_state.selected_finding = idx
-                    st.session_state.investigate_choice = None
-                    st.rerun()
-        st.caption('Already have a question? Use the Explore tab to choose your own variables.')
+    if chosen is not None and not (0 <= chosen < len(findings)):
+        st.session_state.selected_finding = None
+        st.session_state.investigate_choice = None
+        chosen = None
+
+    st.subheader('What would you like to discover?')
+    st.write('Select a question to see its visualization and explore related questions.')
+    st.caption(f'{st.session_state.dataset_title} · {len(filtered):,} records · {len(df.columns)} columns')
+
+    def choose_finding(index: int) -> None:
+        st.session_state.selected_finding = index
+        st.session_state.investigate_choice = None
+
+    if not findings:
+        st.info('Not enough usable numeric data for automatic discoveries. Try the Explore section.')
     else:
-        finding = findings[chosen]
-        if st.button('← All discovery questions', key='return_to_gallery'):
-            st.session_state.selected_finding = None
-            st.session_state.investigate_choice = None
-            st.rerun()
-        st.subheader(question_for(finding, filtered))
-        st.write(guidance_for(finding))
-        if finding['recipe']['type'] == 'time':
-            st.info('Monthly data often have seasonal patterns. Use **Change perspective** below for yearly or decade comparisons; compare only complete periods.')
+        for idx, item in enumerate(findings):
+            selected = chosen == idx
+            with st.container(border=True):
+                st.button(
+                    f'{idx + 1}. {question_for(item, filtered)}',
+                    key=f'discovery_choice_{idx}',
+                    type='primary' if selected else 'secondary',
+                    use_container_width=True,
+                    on_click=choose_finding,
+                    args=(idx,),
+                )
+                st.caption(guidance_for(item))
+        if chosen is None:
+            st.info('Choose a question above to reveal its chart and suggested follow-up investigations.')
         else:
-            st.write(phrase(finding['summary']))
-        st.plotly_chart(pretty_chart(plot_finding(filtered, finding)), use_container_width=True, key='selected_chart')
-        with st.expander('How was this finding calculated?'):
-            st.write(phrase(finding['evidence']))
-            st.write(phrase(finding['question']))
-        if st.button('Save this discovery to My Data Story', key='save_discovery'):
-            ident = ('discovery', finding['title'])
-            if any(item.get('ident') == ident for item in st.session_state.story):
-                st.info('This discovery is already saved.')
+            st.divider()
+            st.markdown('### Your selected investigation')
+
+            finding = findings[chosen]
+            st.subheader(question_for(finding, filtered))
+            st.write(guidance_for(finding))
+            if finding['recipe']['type'] == 'time':
+                st.info('Monthly data often have seasonal patterns. Use **Change perspective** below for yearly or decade comparisons; compare only complete periods.')
             else:
-                fig = pretty_chart(plot_finding(filtered, finding))
-                st.session_state.story.append({
-                    'ident': ident, 'title': question_for(finding, filtered),
-                    'summary': guidance_for(finding), 'evidence': phrase(finding['evidence']),
-                    'chart': fig.to_html(full_html=False, include_plotlyjs=False)
-                })
-                st.success('Saved to My Data Story.')
-        st.divider()
-        st.markdown('### Where would you like to go next?')
-        st.caption('Choose a new perspective. Questions are offered only when supported by the available data.')
-        options = suggest_followups(filtered, finding)
-        if not options:
-            st.info('No other follow-up questions are available. Try Explore for a custom chart.')
-        else:
-            for lane, icon in [('Dig deeper','🔎'), ('Change perspective','📅'), ('Make connections','🔗')]:
-                lane_items = [(i,o) for i,o in enumerate(options) if o['lane'] == lane]
-                if lane_items:
-                    st.markdown(f'**{icon} {lane}**')
-                    for i, option in lane_items:
-                        is_selected = st.session_state.get('investigate_choice') == i
-                        if st.button(
-                            phrase(option['question']),
-                            key=f'follow_{chosen}_{i}',
-                            use_container_width=True,
-                            type='primary' if is_selected else 'secondary',
-                        ):
-                            st.session_state.investigate_choice = i
-                            st.rerun()
-            i = st.session_state.get('investigate_choice')
-            if i is not None and 0 <= i < len(options):
-                option = options[i]
-                with st.container(border=True):
-                    st.markdown('#### ' + phrase(option['question']))
-                    outcome = render_investigation(filtered, finding, option, key=f'investigation_{chosen}_{i}')
-                    if outcome is not None:
-                        explanation, fig = outcome
-                        fig = pretty_chart(fig)
-                        st.plotly_chart(fig, use_container_width=True, key=f'investigation_chart_{chosen}_{i}')
-                        st.write(phrase(explanation))
-                        note = st.text_area('Your interpretation (optional)', key=f'note_{chosen}_{i}', height=75)
-                        if st.button('Save this investigation to My Data Story', key=f'save_followup_{chosen}_{i}'):
-                            ident = ('investigation', finding['title'], option['id'])
-                            if any(item.get('ident') == ident for item in st.session_state.story):
-                                st.info('This investigation is already saved.')
-                            else:
-                                st.session_state.story.append({
-                                    'ident': ident, 'title': phrase(option['question']),
-                                    'summary': 'Follow-up to: ' + question_for(finding, filtered) + (' — ' + note if note.strip() else ''),
-                                    'evidence': phrase(explanation), 'chart': fig.to_html(full_html=False, include_plotlyjs=False)
-                                })
-                                st.success('Saved to My Data Story.')
+                st.write(phrase(finding['summary']))
+            st.plotly_chart(pretty_chart(plot_finding(filtered, finding)), use_container_width=True, key='selected_chart')
+            with st.expander('How was this finding calculated?'):
+                st.write(phrase(finding['evidence']))
+                st.write(phrase(finding['question']))
+            if st.button('Save this discovery to My Data Story', key='save_discovery'):
+                ident = ('discovery', finding['title'])
+                if any(item.get('ident') == ident for item in st.session_state.story):
+                    st.info('This discovery is already saved.')
+                else:
+                    fig = pretty_chart(plot_finding(filtered, finding))
+                    st.session_state.story.append({
+                        'ident': ident, 'title': question_for(finding, filtered),
+                        'summary': guidance_for(finding), 'evidence': phrase(finding['evidence']),
+                        'chart': fig.to_html(full_html=False, include_plotlyjs=False)
+                    })
+                    st.success('Saved to My Data Story.')
+            st.divider()
+            st.markdown('### Where would you like to go next?')
+            st.caption('Choose a new perspective. Questions are offered only when supported by the available data.')
+            options = suggest_followups(filtered, finding)
+            if not options:
+                st.info('No other follow-up questions are available. Try Explore for a custom chart.')
+            else:
+                for lane, icon in [('Dig deeper','🔎'), ('Change perspective','📅'), ('Make connections','🔗')]:
+                    lane_items = [(i,o) for i,o in enumerate(options) if o['lane'] == lane]
+                    if lane_items:
+                        st.markdown(f'**{icon} {lane}**')
+                        for i, option in lane_items:
+                            is_selected = st.session_state.get('investigate_choice') == i
+                            if st.button(
+                                phrase(option['question']),
+                                key=f'follow_{chosen}_{i}',
+                                use_container_width=True,
+                                type='primary' if is_selected else 'secondary',
+                            ):
+                                st.session_state.investigate_choice = i
+                                st.rerun()
+                i = st.session_state.get('investigate_choice')
+                if i is not None and 0 <= i < len(options):
+                    option = options[i]
+                    with st.container(border=True):
+                        st.markdown('#### ' + phrase(option['question']))
+                        outcome = render_investigation(filtered, finding, option, key=f'investigation_{chosen}_{i}')
+                        if outcome is not None:
+                            explanation, fig = outcome
+                            fig = pretty_chart(fig)
+                            st.plotly_chart(fig, use_container_width=True, key=f'investigation_chart_{chosen}_{i}')
+                            st.write(phrase(explanation))
+                            note = st.text_area('Your interpretation (optional)', key=f'note_{chosen}_{i}', height=75)
+                            if st.button('Save this investigation to My Data Story', key=f'save_followup_{chosen}_{i}'):
+                                ident = ('investigation', finding['title'], option['id'])
+                                if any(item.get('ident') == ident for item in st.session_state.story):
+                                    st.info('This investigation is already saved.')
+                                else:
+                                    st.session_state.story.append({
+                                        'ident': ident, 'title': phrase(option['question']),
+                                        'summary': 'Follow-up to: ' + question_for(finding, filtered) + (' — ' + note if note.strip() else ''),
+                                        'evidence': phrase(explanation), 'chart': fig.to_html(full_html=False, include_plotlyjs=False)
+                                    })
+                                    st.success('Saved to My Data Story.')
 
 if st.session_state.active_page == 'Explore':
     st.subheader('Explore your own question')
