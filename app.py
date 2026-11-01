@@ -77,6 +77,7 @@ if st.session_state.get('data_identity') != identity:
     st.session_state.investigation_notes = {}
     st.session_state.selected_finding = None
     st.session_state.investigate_choice = None
+    st.session_state.discovery_questions_open = True
     st.session_state.column_labels = {col: infer_label(col) for col in df.columns}
     st.session_state.dataset_title = source_name.replace('.csv', '').replace('_',' ').strip()
     st.session_state.row_grain = infer_grain(df.columns)
@@ -316,32 +317,46 @@ if st.session_state.active_page == 'Discover':
         st.session_state.investigate_choice = None
         chosen = None
 
-    st.subheader('What would you like to discover?')
-    st.write('Select a question to see its visualization and explore related questions.')
-    st.caption(f'{st.session_state.dataset_title} · {len(filtered):,} records · {len(df.columns)} columns')
-
     def choose_finding(index: int) -> None:
         st.session_state.selected_finding = index
         st.session_state.investigate_choice = None
+        st.session_state.discovery_questions_open = False
 
-    if not findings:
-        st.info('Not enough usable numeric data for automatic discoveries. Try the Explore section.')
-    else:
-        for idx, item in enumerate(findings):
-            selected = chosen == idx
-            with st.container(border=True):
-                st.button(
-                    f'{idx + 1}. {question_for(item, filtered)}',
-                    key=f'discovery_choice_{idx}',
-                    type='primary' if selected else 'secondary',
-                    use_container_width=True,
-                    on_click=choose_finding,
-                    args=(idx,),
-                )
-                st.caption(guidance_for(item))
-        if chosen is None:
-            st.info('Choose a question above to reveal its chart and suggested follow-up investigations.')
+    # A controlled toggle reliably collapses the list when a question is selected.
+    # The selected investigation remains in the page flow below the list.
+    if 'discovery_questions_open' not in st.session_state:
+        st.session_state.discovery_questions_open = chosen is None
+    st.toggle(
+        'What would you like to discover?',
+        key='discovery_questions_open',
+        help='Expand to choose a different discovery question.',
+    )
+    if chosen is not None:
+        st.caption('Selected question: ' + question_for(findings[chosen], filtered))
+
+    if st.session_state.discovery_questions_open:
+        st.write('Select a question to see its visualization and explore related questions.')
+        st.caption(f'{st.session_state.dataset_title} · {len(filtered):,} records · {len(df.columns)} columns')
+        if not findings:
+            st.info('Not enough usable numeric data for automatic discoveries. Try the Explore section.')
         else:
+            for idx, item in enumerate(findings):
+                selected = chosen == idx
+                with st.container(border=True):
+                    st.button(
+                        f'{idx + 1}. {question_for(item, filtered)}',
+                        key=f'discovery_choice_{idx}',
+                        type='primary' if selected else 'secondary',
+                        use_container_width=True,
+                        on_click=choose_finding,
+                        args=(idx,),
+                    )
+                    st.caption(guidance_for(item))
+    if not findings:
+        pass
+    elif chosen is None:
+        st.info('Choose a discovery question above, or use Ask Data Stories AI below.')
+    else:
             st.divider()
             st.markdown('### Your selected investigation')
 
