@@ -1,22 +1,38 @@
-# Data Stories — Beta Deployment
+# Data Stories — Version 5 preview
 
-Data Stories helps people upload a CSV, find evidence-based discoveries, investigate follow-up questions, and export an interactive story.
+A question-first CSV explorer built with Streamlit. Upload a public, non-sensitive CSV, select a suggested question, see a chart, and follow **Dig deeper**, **Change perspective**, or **Make connections**. Explore custom charts and collect findings into an interactive HTML report.
 
-## Publish with GitHub + Streamlit Community Cloud
+## Preview in Streamlit Community Cloud
 
-1. Create a **public** GitHub repository named `data-stories` at https://github.com/new .
-2. Unzip this package on your computer. In GitHub, choose **Add file → Upload files** and upload the **contents** of this package (not the ZIP file itself). Keep `app.py`, `requirements.txt`, `analysis_engine.py`, `investigate.py`, and the `samples` folder at the top level. GitHub's website may not preserve the hidden `.streamlit` folder when dragging a folder; it is optional and the application still runs without it.
-3. Commit the files.
-4. Visit https://share.streamlit.io/ and sign in with GitHub. Choose **Create app → Yup, I have an app**.
-5. Select your repository, branch `main`, and entrypoint `app.py`. Choose an available URL and deploy.
-6. Test the Mt. Bachelor sample, the survey sample, upload a small CSV, investigate a finding, and export My Data Story. Then share the app URL.
+This branch is **version-5**, not the public beta's **main** branch. To create a separate preview:
 
-If the page fails to load, open Streamlit Community Cloud's app logs. Ensure the `requirements.txt` is in the repository root and all Python modules were uploaded.
+1. Visit https://share.streamlit.io/ and choose **Create app**.
+2. Choose **Yup, I have an app** and select repository `teresa-mcclintic/data-stories`.
+3. Set branch to `version-5` (not `main`) and main file to `app.py`.
+4. Choose a different app URL, e.g. `data-stories-preview.streamlit.app` if available, and deploy.
+5. Use **Try a sample** to test the snowfall and fictional survey data. Try uploading your own non-sensitive CSV.
+6. Return to the GitHub draft pull request to review the changes. **Do not merge** until you are satisfied.
 
-## Beta safety note
+Your existing Streamlit app based on `main` stays on Version 4 unless the pull request is merged.
 
-This is a prototype designed for non-sensitive CSV files. Uploaded data is processed on the hosted application server; the application has no deliberately configured persistent database, but that does not guarantee data is never retained in infrastructure or logs. Do not upload confidential information, personal identifiers, student records, medical data, or other protected information. Do not interpret descriptive patterns as proof of causation. Limit uploads to 8 MB.
+## Run locally
 
-## Beta feedback
+```powershell
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
 
-Use `BETA_FEEDBACK.md` to create a short Google Form or collect written responses. A form is not embedded in the app.
+## What's new
+
+- A gallery of up to five discoverable questions instead of a wall of charts.
+- A single investigation view with a clear way back to all questions.
+- Prominent follow-up questions organized by three lenses.
+- Simpler sidebar and approachable titles.
+- Exclusion of incomplete months from the provided snowfall example.
+- Retained Explore, My Data Story, and Data & quality sections.
+
+## Testing and limitations
+
+The interface still needs a full end-to-end browser test in Streamlit. The original numerical engine and follow-up logic are kept; automatic year/month inference and user-chosen aggregations should be checked against realistic datasets before wider rollout. This is a **descriptive data exploration** tool, not a statistically validated or causal inference system.
+
+Do not upload confidential, identifiable student, medical, financial, or other protected information to the public app without a privacy and security review. The CSV is processed on Streamlit's hosting server. The Mt. Bachelor example is modeled ERA5 snowfall, not official resort observations.
