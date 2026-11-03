@@ -1,38 +1,57 @@
-# Data Stories — Version 5 preview
+# Data Stories — Version 6 AI preview
 
-A question-first CSV explorer built with Streamlit. Upload a public, non-sensitive CSV, select a suggested question, see a chart, and follow **Dig deeper**, **Change perspective**, or **Make connections**. Explore custom charts and collect findings into an interactive HTML report.
+Version 6 builds on Version 5 and adds an **optional** AI question box below the Discover and Explore content, without requiring a discovery to be selected.
 
-## Preview in Streamlit Community Cloud
+## What it does
 
-This branch is **version-5**, not the public beta's **main** branch. To create a separate preview:
+- Users ask a question about an uploaded CSV in ordinary language.
+- An OpenAI model looks only at **column names, inferred types, readable labels, and the user's question** and proposes one supported analysis plan. It does not receive CSV rows.
+- Python validates that plan against the real columns, computes descriptive statistics locally, and draws an interactive Plotly chart.
+- Supported analyses: time trends (original dates, calendar years, decades, months); category comparisons; numeric distributions; and scatterplot/correlation comparisons.
+- Unsupported questions—prediction, causal inference, specific filtering, many seasonal comparisons, statistical tests—are declined rather than answered with invented numbers.
+- No code supplied by AI is executed. AI produces an analysis plan, not the answer.
+- An AI result can be saved to **My Data Stories** with the original question, calculated explanation, interactive chart, and an optional personal note. Saved entries are marked **AI-Assisted Investigation** in the story list and HTML report.
 
-1. Visit https://share.streamlit.io/ and choose **Create app**.
-2. Choose **Yup, I have an app** and select repository `teresa-mcclintic/data-stories`.
-3. Set branch to `version-5` (not `main`) and main file to `app.py`.
-4. Choose a different app URL, e.g. `data-stories-preview.streamlit.app` if available, and deploy.
-5. Use **Try a sample** to test the snowfall and fictional survey data. Try uploading your own non-sensitive CSV.
-6. Return to the GitHub draft pull request to review the changes. **Do not merge** until you are satisfied.
+The descriptive answer is produced by Python, not a free-form AI interpretation. Future versions may expand supported question types and verified explanations.
 
-Your existing Streamlit app based on `main` stays on Version 4 unless the pull request is merged.
+## Deploy as a separate preview
 
-## Run locally
+1. In Streamlit Community Cloud, create a **new** app based on `teresa-mcclintic/data-stories`, selecting branch **`version-6`** and main file **`app.py`**.
+2. Give it a distinct subdomain. **Do not repoint the existing Version 5 or public Version 4 apps**.
+3. Visit https://platform.openai.com/api-keys to create an API key. OpenAI API usage is billed separately from ChatGPT subscriptions.
+4. In the **Version 6 app's** Streamlit **App settings → Secrets**, add:
+
+```toml
+OPENAI_API_KEY = "your-key-here"
+OPENAI_MODEL = "gpt-4.1-mini"
+```
+
+**Never save the real key to GitHub, README, screenshots, or in chat.** The key is read server-side from Streamlit secrets.
+
+5. Reload the preview. Choose the Mt. Bachelor or fictional survey sample, scroll below the Discover questions or Explore chart to **Ask Data Stories AI**, acknowledge the privacy notice, and ask a question such as **How has snowfall changed from decade to decade?**
+6. Confirm the generated chart and numerical summary; test with a question requiring unsupported operations to see the safe refusal.
+
+Without the API key, the regular Version 5 functionality remains available and the AI box explains that setup is needed.
+
+## Privacy and cost limits
+
+- **Not sent to OpenAI:** uploaded CSV rows, charts, calculated values, saved stories.
+- **Sent to OpenAI:** question text, column names, data types, and display labels. Column names and questions can themselves be sensitive; use only non-sensitive datasets in this beta.
+- API responses request `store=False`.
+- Up to **five AI submissions per Streamlit browser session** in this prototype. This is **not** strong abuse prevention; public rollout requires authentication, durable per-user quotas, billing alerts, and ideally a server-side rate limiter.
+- Set a tight API budget before exposing the service to anyone else.
+
+## Current limitations
+
+Data Stories remains a descriptive exploratory tool. Even a validated chart might not fully answer a nuanced natural-language question. In particular, annual/decade charts derived from monthly data require complete calendar years; season-year analyses aren't yet offered. For unexpected behavior, verify against the underlying CSV. Correlations do not establish causation.
+
+## Local development
 
 ```powershell
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-## What's new
+Local secrets should be stored outside the repository in `.streamlit/secrets.toml`. Do not commit that file.
 
-- A gallery of up to five discoverable questions instead of a wall of charts.
-- A single investigation view with a clear way back to all questions.
-- Prominent follow-up questions organized by three lenses.
-- Simpler sidebar and approachable titles.
-- Exclusion of incomplete months from the provided snowfall example.
-- Retained Explore, My Data Story, and Data & quality sections.
-
-## Testing and limitations
-
-The interface still needs a full end-to-end browser test in Streamlit. The original numerical engine and follow-up logic are kept; automatic year/month inference and user-chosen aggregations should be checked against realistic datasets before wider rollout. This is a **descriptive data exploration** tool, not a statistically validated or causal inference system.
-
-Do not upload confidential, identifiable student, medical, financial, or other protected information to the public app without a privacy and security review. The CSV is processed on Streamlit's hosting server. The Mt. Bachelor example is modeled ERA5 snowfall, not official resort observations.
+The public site stays on `main` (Version 4) and the earlier preview remains on `version-5`.

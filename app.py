@@ -11,6 +11,7 @@ import streamlit as st
 from analysis_engine import discover, fmt, load_csv, plot_finding, profile
 from investigate import suggest_followups, render_investigation
 from data_context import infer_label, infer_grain, replace_fields, style_figure, column_role
+from ai_assistant import plan_question, calculate, UnsupportedQuestion
 
 ROOT = Path(__file__).resolve().parent
 st.set_page_config(page_title='Data Stories', page_icon='📈', layout='wide', initial_sidebar_state='expanded')
@@ -45,7 +46,8 @@ def story_download(story: list[dict], source: str) -> str:
         caption=html.escape(entry['title'])
         desc=html.escape(entry['summary'])
         evidence=html.escape(entry['evidence'])
-        cards.append(f'<section><h2>{caption}</h2><p>{desc}</p><p><small>{evidence}</small></p>{entry["chart"]}</section>')
+        origin=html.escape(entry.get('origin', 'Discovery'))
+        cards.append(f'<section><p><small>{origin}</small></p><h2>{caption}</h2><p>{desc}</p><p><small>{evidence}</small></p>{entry["chart"]}</section>')
     return ('<!doctype html><html><head><meta charset="utf-8"><title>My Data Story</title>'
             '<style>body{font-family:Arial,Helvetica,sans-serif;max-width:900px;margin:36px auto;padding:0 20px;color:#243247}'
             'section{padding:24px 0;border-top:1px solid #ddd}h1{color:#193457}small{color:#536278}</style></head><body>'
@@ -75,9 +77,13 @@ if st.session_state.get('data_identity') != identity:
     st.session_state.investigation_notes = {}
     st.session_state.selected_finding = None
     st.session_state.investigate_choice = None
+    st.session_state.followup_question_picker = None
+    st.session_state.discovery_question_picker = None
     st.session_state.column_labels = {col: infer_label(col) for col in df.columns}
     st.session_state.dataset_title = source_name.replace('.csv', '').replace('_',' ').strip()
     st.session_state.row_grain = infer_grain(df.columns)
+    st.session_state.ai_answer = None
+    st.session_state.ai_count = 0
 
 p = profile(df)
 st.caption(f'Dataset: **{st.session_state.dataset_title}** · CSV is processed in the running app. No account or database is used.')
@@ -212,110 +218,216 @@ for col, (page, label, explanation) in zip(nav_cols, nav_items):
         st.caption(explanation)
 st.divider()
 
+def render_ai_panel() -> None:
+    st.markdown('### ✨ Ask Data Stories AI')
+    with st.expander('Ask your own question about this dataset', expanded=False):
+        st.caption('Try a question in your own words. AI chooses a supported analysis; Python calculates the numbers and draws the chart.')
+        try:
+            ai_key = st.secrets.get('OPENAI_API_KEY', '')
+            ai_model = st.secrets.get('OPENAI_MODEL', 'gpt-4.1-mini')
+        except (FileNotFoundError, KeyError):
+            ai_key = ''
+            ai_model = 'gpt-4.1-mini'
+        if not ai_key:
+            st.info('AI is not configured yet. The discovery and follow-up tools above still work. An app administrator can add OPENAI_API_KEY in Streamlit app settings → Secrets.')
+        else:
+            st.caption('Privacy: your question and column names/types are sent to OpenAI. Dataset rows are not sent. Do not ask questions containing private information.')
+            ai_consent = st.checkbox('I understand what is sent to the AI service', key='ai_consent')
+            if st.session_state.get('ai_count',0) >= 5:
+                st.warning('You have reached the five-question limit for this session.')
+            else:
+                with st.form('ai_question_form', clear_on_submit=False):
+                    ai_question = st.text_input('Your question about the data', max_chars=400,
+                        placeholder='Example: How did snowfall differ by decade?')
+                    ai_submit = st.form_submit_button('Ask Data Stories AI', disabled=not ai_consent)
+                if ai_submit:
+                    if not ai_question.strip():
+                        st.warning('Please type a question.')
+                    else:
+                        st.session_state.ai_count += 1
+                        st.session_state.ai_answer = None
+                        try:
+                            with st.spinner('Planning an analysis and calculating the answer…'):
+                                ai_plan = plan_question(ai_question,filtered,
+                                    st.session_state.column_labels,ai_key,ai_model)
+                                ai_summary,ai_fig = calculate(filtered,ai_plan,
+                                    st.session_state.column_labels)
+                                st.session_state.ai_answer = (ai_question,ai_summary,ai_fig)
+                        except UnsupportedQuestion as exc:
+                            st.info(str(exc))
+                        except Exception as exc:
+                            # Provide a safe, actionable error rather than hiding every failure.
+                            # Do not display request headers, API keys or raw exceptions.
+                            import logging
+                            logging.getLogger(__name__).exception('Data Stories AI request failed')
+                            try:
+                                from openai import AuthenticationError, PermissionDeniedError, RateLimitError, APIConnectionError, APITimeoutError, BadRequestError, NotFoundError
+                            except ImportError:
+                                AuthenticationError = PermissionDeniedError = RateLimitError = APIConnectionError = APITimeoutError = BadRequestError = NotFoundError = ()
+                            if isinstance(exc, AuthenticationError):
+                                st.error('OpenAI rejected the API key. Check the OPENAI_API_KEY value in this app’s Streamlit Secrets.')
+                            elif isinstance(exc, PermissionDeniedError):
+                                st.error('This OpenAI API project does not have permission to use the selected model. Check its project access and model setting.')
+                            elif isinstance(exc, RateLimitError):
+                                st.error('OpenAI returned a usage or quota limit. Check your API project’s billing, available credits, and rate limits.')
+                            elif isinstance(exc, (APIConnectionError, APITimeoutError)):
+                                st.error('The app could not connect to OpenAI. Please try again or check the Streamlit logs.')
+                            elif isinstance(exc, (BadRequestError, NotFoundError)):
+                                st.error('The OpenAI request was rejected. Confirm OPENAI_MODEL is supported by your API project (try gpt-4.1-mini) and consult the Streamlit app logs.')
+                            else:
+                                st.error(f'The analysis encountered an unexpected error ({type(exc).__name__}). Open the Streamlit app logs for details. No API key is shown here.')
+            if st.session_state.get('ai_answer'):
+                asked, answer, figure = st.session_state.ai_answer
+                st.markdown('**Your question:** ' + asked)
+                st.plotly_chart(figure,use_container_width=True,key='ai_result_chart')
+                st.write(answer)
+                st.caption('Numbers and visualization are computed by Python from the supplied CSV. Not every question is supported yet.')
+                st.markdown('#### Add this investigation to your story')
+                ai_note = st.text_area(
+                    'Your interpretation (optional)',
+                    key='ai_story_note',
+                    height=85,
+                    placeholder='What do you find interesting about this result?',
+                )
+                if st.button('📖 Save to My Data Story', key='save_ai_investigation', type='primary'):
+                    # Reuse the existing story format and preserve the interactive chart.
+                    import hashlib
+                    fingerprint = hashlib.sha256(
+                        (asked + '\\n' + answer).encode('utf-8')
+                    ).hexdigest()
+                    ident = ('ai_investigation', fingerprint)
+                    if any(entry.get('ident') == ident for entry in st.session_state.story):
+                        st.info('This AI investigation is already saved to My Data Story.')
+                    else:
+                        st.session_state.story.append({
+                            'ident': ident,
+                            'origin': 'AI-Assisted Investigation',
+                            'title': asked,
+                            'summary': answer + ('\\n\\nYour interpretation: ' + ai_note.strip() if ai_note.strip() else ''),
+                            'evidence': 'Descriptive results calculated from the uploaded dataset using Python; AI assisted with selecting an analysis. Interpretations do not establish causation.',
+                            'chart': figure.to_html(full_html=False, include_plotlyjs=False),
+                        })
+                        st.success('Saved to My Data Story. Open My Data Stories to review or download it.')
+
+
 if st.session_state.active_page == 'Discover':
     findings = discover(filtered, limit=5)
     chosen = st.session_state.get('selected_finding')
     if chosen is not None and not (0 <= chosen < len(findings)):
         st.session_state.selected_finding = None
         st.session_state.investigate_choice = None
+        st.session_state.discovery_question_picker = None
+        st.session_state.followup_question_picker = None
         chosen = None
 
     st.subheader('What would you like to discover?')
-    st.write('Select a question to see its visualization and explore related questions.')
     st.caption(f'{st.session_state.dataset_title} · {len(filtered):,} records · {len(df.columns)} columns')
 
-    def choose_finding(index: int) -> None:
-        st.session_state.selected_finding = index
-        st.session_state.investigate_choice = None
+    def choose_discovery_question() -> None:
+        new_choice = st.session_state.discovery_question_picker
+        if new_choice != st.session_state.get('selected_finding'):
+            st.session_state.selected_finding = new_choice
+            st.session_state.investigate_choice = None
+            st.session_state.followup_question_picker = None
 
     if not findings:
-        st.info('Not enough usable numeric data for automatic discoveries. Try the Explore section.')
+        st.info('Not enough usable numeric data for automatic discoveries. Try Explore or Ask Data Stories AI below.')
     else:
-        for idx, item in enumerate(findings):
-            selected = chosen == idx
-            with st.container(border=True):
-                st.button(
-                    f'{idx + 1}. {question_for(item, filtered)}',
-                    key=f'discovery_choice_{idx}',
-                    type='primary' if selected else 'secondary',
-                    use_container_width=True,
-                    on_click=choose_finding,
-                    args=(idx,),
-                )
-                st.caption(guidance_for(item))
-        if chosen is None:
-            st.info('Choose a question above to reveal its chart and suggested follow-up investigations.')
-        else:
-            st.divider()
-            st.markdown('### Your selected investigation')
+        st.selectbox(
+            'Choose a question to investigate',
+            options=list(range(len(findings))),
+            index=None,
+            placeholder='Select a discovery question…',
+            format_func=lambda idx: question_for(findings[idx], filtered),
+            key='discovery_question_picker',
+            on_change=choose_discovery_question,
+            label_visibility='collapsed',
+            help='Select a question to see its chart and relevant follow-up investigations.',
+        )
 
-            finding = findings[chosen]
-            st.subheader(question_for(finding, filtered))
-            st.write(guidance_for(finding))
-            if finding['recipe']['type'] == 'time':
-                st.info('Monthly data often have seasonal patterns. Use **Change perspective** below for yearly or decade comparisons; compare only complete periods.')
+    # Keep both menus together, even before a discovery is selected.
+    st.markdown('### Where would you like to go next?')
+    options = suggest_followups(filtered, findings[chosen]) if findings and chosen is not None else []
+    if chosen is None:
+        st.caption('Choose a discovery question above to unlock relevant follow-up questions.')
+    elif not options:
+        st.caption('No follow-up questions are available for this discovery. You can still use AI below.')
+    else:
+        st.caption('Choose a related question to investigate a different perspective.')
+
+    def choose_followup_question() -> None:
+        st.session_state.investigate_choice = st.session_state.followup_question_picker
+
+    st.selectbox(
+        'Choose a follow-up question',
+        options=list(range(len(options))),
+        index=None,
+        placeholder='Select a discovery above first…' if chosen is None
+                    else ('No follow-up questions available' if not options
+                          else 'Select a follow-up question…'),
+        format_func=lambda idx: f"{options[idx]['lane']} — {phrase(options[idx]['question'])}",
+        key='followup_question_picker',
+        on_change=choose_followup_question,
+        label_visibility='collapsed',
+        disabled=chosen is None or not options,
+        help='Follow-ups depend on the discovery selected above.',
+    )
+
+    if findings and chosen is not None:
+        st.divider()
+        st.markdown('### Your selected investigation')
+
+        finding = findings[chosen]
+        st.subheader(question_for(finding, filtered))
+        st.write(guidance_for(finding))
+        if finding['recipe']['type'] == 'time':
+            st.info('Monthly data often have seasonal patterns. Use **Change perspective** below for yearly or decade comparisons; compare only complete periods.')
+        else:
+            st.write(phrase(finding['summary']))
+        st.plotly_chart(pretty_chart(plot_finding(filtered, finding)), use_container_width=True, key='selected_chart')
+        with st.expander('How was this finding calculated?'):
+            st.write(phrase(finding['evidence']))
+            st.write(phrase(finding['question']))
+        if st.button('Save this discovery to My Data Story', key='save_discovery'):
+            ident = ('discovery', finding['title'])
+            if any(item.get('ident') == ident for item in st.session_state.story):
+                st.info('This discovery is already saved.')
             else:
-                st.write(phrase(finding['summary']))
-            st.plotly_chart(pretty_chart(plot_finding(filtered, finding)), use_container_width=True, key='selected_chart')
-            with st.expander('How was this finding calculated?'):
-                st.write(phrase(finding['evidence']))
-                st.write(phrase(finding['question']))
-            if st.button('Save this discovery to My Data Story', key='save_discovery'):
-                ident = ('discovery', finding['title'])
-                if any(item.get('ident') == ident for item in st.session_state.story):
-                    st.info('This discovery is already saved.')
-                else:
-                    fig = pretty_chart(plot_finding(filtered, finding))
-                    st.session_state.story.append({
-                        'ident': ident, 'title': question_for(finding, filtered),
-                        'summary': guidance_for(finding), 'evidence': phrase(finding['evidence']),
-                        'chart': fig.to_html(full_html=False, include_plotlyjs=False)
-                    })
-                    st.success('Saved to My Data Story.')
-            st.divider()
-            st.markdown('### Where would you like to go next?')
-            st.caption('Choose a new perspective. Questions are offered only when supported by the available data.')
-            options = suggest_followups(filtered, finding)
-            if not options:
-                st.info('No other follow-up questions are available. Try Explore for a custom chart.')
-            else:
-                for lane, icon in [('Dig deeper','🔎'), ('Change perspective','📅'), ('Make connections','🔗')]:
-                    lane_items = [(i,o) for i,o in enumerate(options) if o['lane'] == lane]
-                    if lane_items:
-                        st.markdown(f'**{icon} {lane}**')
-                        for i, option in lane_items:
-                            is_selected = st.session_state.get('investigate_choice') == i
-                            if st.button(
-                                phrase(option['question']),
-                                key=f'follow_{chosen}_{i}',
-                                use_container_width=True,
-                                type='primary' if is_selected else 'secondary',
-                            ):
-                                st.session_state.investigate_choice = i
-                                st.rerun()
-                i = st.session_state.get('investigate_choice')
-                if i is not None and 0 <= i < len(options):
-                    option = options[i]
-                    with st.container(border=True):
-                        st.markdown('#### ' + phrase(option['question']))
-                        outcome = render_investigation(filtered, finding, option, key=f'investigation_{chosen}_{i}')
-                        if outcome is not None:
-                            explanation, fig = outcome
-                            fig = pretty_chart(fig)
-                            st.plotly_chart(fig, use_container_width=True, key=f'investigation_chart_{chosen}_{i}')
-                            st.write(phrase(explanation))
-                            note = st.text_area('Your interpretation (optional)', key=f'note_{chosen}_{i}', height=75)
-                            if st.button('Save this investigation to My Data Story', key=f'save_followup_{chosen}_{i}'):
-                                ident = ('investigation', finding['title'], option['id'])
-                                if any(item.get('ident') == ident for item in st.session_state.story):
-                                    st.info('This investigation is already saved.')
-                                else:
-                                    st.session_state.story.append({
-                                        'ident': ident, 'title': phrase(option['question']),
-                                        'summary': 'Follow-up to: ' + question_for(finding, filtered) + (' — ' + note if note.strip() else ''),
-                                        'evidence': phrase(explanation), 'chart': fig.to_html(full_html=False, include_plotlyjs=False)
-                                    })
-                                    st.success('Saved to My Data Story.')
+                fig = pretty_chart(plot_finding(filtered, finding))
+                st.session_state.story.append({
+                    'ident': ident, 'title': question_for(finding, filtered),
+                    'summary': guidance_for(finding), 'evidence': phrase(finding['evidence']),
+                    'chart': fig.to_html(full_html=False, include_plotlyjs=False)
+                })
+                st.success('Saved to My Data Story.')
+        i = st.session_state.get('investigate_choice')
+        if i is not None and 0 <= i < len(options):
+            option = options[i]
+            with st.container(border=True):
+                st.markdown('#### ' + phrase(option['question']))
+                outcome = render_investigation(filtered, finding, option, key=f'investigation_{chosen}_{i}')
+                if outcome is not None:
+                    explanation, fig = outcome
+                    fig = pretty_chart(fig)
+                    st.plotly_chart(fig, use_container_width=True, key=f'investigation_chart_{chosen}_{i}')
+                    st.write(phrase(explanation))
+                    note = st.text_area('Your interpretation (optional)', key=f'note_{chosen}_{i}', height=75)
+                    if st.button('Save this investigation to My Data Story', key=f'save_followup_{chosen}_{i}'):
+                        ident = ('investigation', finding['title'], option['id'])
+                        if any(item.get('ident') == ident for item in st.session_state.story):
+                            st.info('This investigation is already saved.')
+                        else:
+                            st.session_state.story.append({
+                                'ident': ident, 'title': phrase(option['question']),
+                                'summary': 'Follow-up to: ' + question_for(finding, filtered) + (' — ' + note if note.strip() else ''),
+                                'evidence': phrase(explanation), 'chart': fig.to_html(full_html=False, include_plotlyjs=False)
+                            })
+                            st.success('Saved to My Data Story.')
+
+
+
+    st.divider()
+    render_ai_panel()
 
 if st.session_state.active_page == 'Explore':
     st.subheader('Explore your own question')
@@ -365,6 +477,9 @@ if st.session_state.active_page == 'Explore':
         st.plotly_chart(fig,use_container_width=True,key='explore_chart')
         st.download_button('Download interactive chart (HTML)',fig.to_html(full_html=True,include_plotlyjs=True).encode('utf-8'), 'data-stories-chart.html','text/html')
 
+    st.divider()
+    render_ai_panel()
+
 if st.session_state.active_page == 'My Data Stories':
     st.subheader('My Data Story')
     st.write('Collect discoveries and follow-up investigations here, then download a self-contained HTML report with interactive charts. The story is held in this browser session only.')
@@ -375,6 +490,8 @@ if st.session_state.active_page == 'My Data Stories':
         for i, item in enumerate(story):
             a,b=st.columns([5,1])
             a.markdown(f'**{i+1}. {item["title"]}**')
+            if item.get('origin'):
+                a.caption(item['origin'])
             a.write(item['summary'])
             if b.button('Remove',key=f'remove_{i}'):
                 st.session_state.story.pop(i)
